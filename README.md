@@ -138,5 +138,6 @@ handling without touching live tabs. See [the tests](tests/test_herdr_labels.py)
 
 Copyright © 2026 Kevin Manase and contributors.
 
-[GNU AGPL version 3 only](LICENSE), continuing the license of the helpers
-originally published in [Agent Wire](https://github.com/kevinmanase/agent-wire/commit/527898dfce45fac1dccc8cac7e1433e2ebb1fe53).
+Herdr customizations is licensed under the
+[GNU Affero General Public License, version 3 only](LICENSE)
+(`AGPL-3.0-only`). The full license is included in this repository.

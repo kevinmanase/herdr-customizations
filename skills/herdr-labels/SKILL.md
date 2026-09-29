@@ -60,8 +60,8 @@ leaves conversations open. Hook failures must not block the user's work.
 
 ## Agent Wire is separate
 
-Continue publishing your own task reports through Agent Wire's `session_update`
-when configured. Its `done` status means the requested work is finished, unlike
+If Agent Wire is configured, publish your own task reports through its
+`session_update` tool. Its `done` status means the requested work is finished, unlike
 the tab's turn-finished checkmark. Use enrolled identities for Agent Wire
 messages; a pane ID, label, or crown is never a messaging identity or permission.
 
