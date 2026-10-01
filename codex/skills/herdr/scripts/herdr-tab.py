@@ -145,6 +145,15 @@ def needs(status, ask):
     )
 
 
+# Peer traffic arrives as a prompt too: a Codex report typed in with `herdr agent prompt`, or a
+# Claude cross-session message. Only Kevin's own prompt answers his pending ask.
+PEER_PROMPTS = ("<cross-session-message", "Status from ")
+
+
+def from_kevin(payload):
+    return not str(payload.get("prompt") or "").lstrip().startswith(PEER_PROMPTS)
+
+
 def set_status(status, clear_needs=False):
     tab = current_tab()
     current, _, name = read(tab)
@@ -192,7 +201,7 @@ def session_role():
         if me.get("name") == "orchestrator":
             return True, (
                 "You are the shared Herdr orchestrator (👑). Read the skill's "
-                "orchestrator reference and ~/.local/state/orchestrator/STATUS.md."
+                "orchestrator reference; keep no notes file."
             )
         agent = herdr("agent", "get", "orchestrator")["agent"]
         return False, (
@@ -315,7 +324,7 @@ def hook(payload):
             render(current_tab(), READY, "", "👑 orchestrator" if mine else "")
         # Resume and compaction preserve the task and any pending ask.
     elif event == "UserPromptSubmit":
-        set_status(WORKING, clear_needs=True)
+        set_status(WORKING, clear_needs=from_kevin(payload))
     elif event == "PreToolUse" and tool_name(payload) in (
         "request_user_input",
         "request_user_input_async",
