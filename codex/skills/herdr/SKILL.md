@@ -9,10 +9,6 @@ Kevin scans Herdr's tab strip to see what each agent is doing and which ones nee
 him. Keep the label honest: a status emoji, a stage emoji, and a short task name.
 This skill controls the local terminal workspace through the `herdr` CLI.
 
-## Source
-
-This skill comes from [kevinmanase/herdr-customizations](https://github.com/kevinmanase/herdr-customizations), along with its `herdr-tab.py` helper. To change any of them, edit the repo clone, open a PR, and once it merges copy the files again on each machine as `docs/setup.md` describes. Never patch one machine's installed copy alone.
-
 ## Keep your tab current
 
 Use the bundled [herdr-tab helper](scripts/herdr-tab.py). The commands below use
