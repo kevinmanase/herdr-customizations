@@ -61,7 +61,8 @@ python3 ~/.codex/skills/herdr/scripts/herdr-tab.py status done
 ```
 
 `status done` preserves an existing ❓/❗. `status working` clears it when Kevin
-responds or the request is resolved. All commands are no-ops outside Herdr.
+responds or the request is resolved. The prompt hook clears it only for Kevin's
+own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
 The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. It does not start other agents.
 
@@ -102,7 +103,7 @@ finishing, or starting a session, send the existing orchestrator one concise
 update via Herdr's agent interface. Read
 [orchestrator coordination](references/orchestrator.md) before messaging it or
 when Kevin assigns you that role. Session hooks retain the crown across a clear
-and remind a Codex orchestrator where its durable notes live.
+and remind a Codex orchestrator to rebuild its picture rather than keep notes.
 
 ## Automatic Codex hooks
 

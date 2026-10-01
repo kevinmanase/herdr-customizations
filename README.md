@@ -53,7 +53,8 @@ both parts:
 ```
 
 A turn ending leaves the question visible. My next message, or my answer
-to a question dialog, clears it and the tab goes back to `⏳`.
+to a question dialog, clears it and the tab goes back to `⏳`. Another
+agent's message doesn't.
 
 ## Why the hooks inject context
 
@@ -76,8 +77,8 @@ the role, and tells every other session to report to it.
   Claude tab, or opens a new tab when there is enough free memory.
 
 The orchestrator coordinates. It hands investigations, fixes and watching CI
-to fresh sessions, and keeps its notes in
-`~/.local/state/orchestrator/STATUS.md`.
+to fresh sessions. It keeps no notes file: it rebuilds its picture each time
+from ticket-graph checkpoints, Linear, GitHub and the tabs.
 
 ## Set it up
 

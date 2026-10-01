@@ -134,8 +134,8 @@ def orchestrator_context(agent):
     if agent and agent["pane_id"] == os.environ.get("HERDR_PANE_ID"):
         return (
             "You are the orchestrator (👑): the one session that keeps track of all the others for Kevin. "
-            "Load the `herdr` skill and follow its Orchestrator section. Your notes are in "
-            "~/.local/state/orchestrator/STATUS.md."
+            "Load the `herdr` skill and follow its Orchestrator section. Keep no notes: rebuild the picture "
+            "each time from ticket-graph checkpoints, Linear, GitHub and the tabs."
         )
     if agent:
         return (
@@ -244,6 +244,15 @@ def needs(kind, ask):
         "--sound",
         "request",
     )
+
+
+# Peer traffic arrives as a prompt too: SendMessage from another Claude session, or a Codex report
+# typed in with `herdr agent prompt`. Only Kevin's own prompt answers his pending ask.
+PEER_PROMPTS = ("<cross-session-message", "Status from ")
+
+
+def from_kevin(payload):
+    return not str(payload.get("prompt") or "").lstrip().startswith(PEER_PROMPTS)
 
 
 def set_status(status, clear_needs=True):
@@ -367,7 +376,7 @@ def hook(event):
         if not agent:
             ensure_orchestrator()
     elif event in ("prompt", "resume"):
-        set_status(WORKING)
+        set_status(WORKING, clear_needs=from_kevin(payload))
     elif event == "question":
         needs("question", dialog_ask(payload))
     elif event == "notify":

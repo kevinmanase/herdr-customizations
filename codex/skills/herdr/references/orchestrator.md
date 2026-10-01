@@ -1,14 +1,14 @@
 # Orchestrator coordination from Codex
 
 The single Herdr agent named `orchestrator` is shared across Claude and Codex.
-Its notes live at `~/.local/state/orchestrator/STATUS.md`. The existing Claude
+It keeps no notes file. The existing Claude
 integration maintains that agent; Codex must not create a competing orchestrator
 merely because it is a different agent kind.
 
 ## Sending an update
 
-Discover with `herdr agent get orchestrator`. If it is your pane, update your
-notes instead of messaging yourself. Otherwise send one self-contained line
+Discover with `herdr agent get orchestrator`. If it is your pane, don't message
+yourself. Otherwise send one self-contained line
 when you merge, get blocked, finish, or start another session. Include the
 sender's pane or ticket, outcome, and remaining work:
 
@@ -34,12 +34,16 @@ Kevin's request to restore or run orchestration.
    helper to set your name to `👑 orchestrator`. Herdr enforces name uniqueness;
    if a concurrent claim wins, re-inspect instead of starting another agent.
 3. Tell the previous owner about the handoff through `herdr agent prompt` if it
-   can accept input. Use `STATUS.md` to recover the current work and open asks.
+   can accept input. Recover the current work and open asks as below.
    Codex does not need Claude's prompt-bar color or session naming API: the
    Herdr name and crown identify the role.
 
-Keep the notes current with Latest, Needs Kevin, Done, Left, and a Sessions
-table. Reconcile updates against git, GitHub, Linear, and CI before acting.
+Keep no notes file. Rebuild the picture each time from each worktree's
+ticket-graph checkpoint (`git worktree list`, then
+`git -C <worktree> rev-parse --path-format=absolute --git-path ticket-graph.json`),
+Linear status and "blocked by" relations, GitHub PRs, CI and merges, and tab
+labels and Agent Wire reports. Turn loose ends into Linear tickets.
+Reconcile updates against git, GitHub, Linear, and CI before acting.
 Inspect tabs with `herdr agent read <pane> --source recent-unwrapped --lines 200`.
 Send a stalled session one clear, scoped nudge using `herdr agent prompt`.
 

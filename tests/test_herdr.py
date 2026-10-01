@@ -88,6 +88,23 @@ def test_name_keeps_status_and_an_ask_survives_stop(herdr):
     assert herdr.label() == "⏳ 🔍 login bug"
 
 
+def test_a_peer_message_keeps_the_ask(herdr):
+    herdr.run(TAB, "name", "🔍 login bug")
+    herdr.run(TAB, "ask", "ship today?")
+    for prompt in ('<cross-session-message from="eng-1">merged</cross-session-message>', "Status from p3: done"):
+        herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"prompt": prompt}))
+        assert herdr.label() == "❓ ship today? · 🔍 login bug"
+    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"prompt": "yes, ship it"}))
+    assert herdr.label() == "⏳ 🔍 login bug"
+
+
+def test_codex_helper_tells_kevin_from_peers():
+    from_kevin = runpy.run_path(str(CODEX_TAB))["from_kevin"]
+    assert from_kevin({"prompt": "yes, ship it"})
+    assert not from_kevin({"prompt": "Status from p3: done"})
+    assert not from_kevin({"prompt": '<cross-session-message from="x">hi</cross-session-message>'})
+
+
 def test_clear_resets_a_worker_to_ready(herdr):
     herdr.run(TAB, "name", "🛠️ login fix")
     herdr.run(TAB, "hook", "session", stdin='{"source": "clear"}')

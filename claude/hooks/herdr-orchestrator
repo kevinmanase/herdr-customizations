@@ -12,7 +12,8 @@ session `orchestrator` (SendMessage reaches it by that name) and turns its promp
 A restart can clear display metadata without ending the assigned conversation. `ensure`
 starts no spare while a crowned tab still runs any agent. It can recover a confirmed vacant
 crowned shell, but a missing crown requires owner reconciliation rather than a new tab.
-The shared coordinator's notes live in STATUS.
+The orchestrator keeps no notes: it rebuilds its picture from ticket-graph checkpoints, Linear,
+GitHub and the tabs each time.
 
 `next` takes the first brief from QUEUE (<order>-<agent-name>.md, one self-contained brief each).
 It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
@@ -34,7 +35,6 @@ COLOR = "yellow"
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 TAB = os.path.expanduser("~/.claude/hooks/herdr-tab")
 STATE = os.path.expanduser("~/.local/state/orchestrator")
-STATUS = os.path.join(STATE, "STATUS.md")
 WORK_DIR = os.path.expanduser(os.environ.get("HERDR_WORK_DIR") or os.getcwd())
 QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herdr-fleet/queue")
 MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
@@ -42,9 +42,9 @@ GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr
 BRIEF = (
     "You are the orchestrator: the one Claude session in Herdr that keeps track of all the others "
     "for Kevin. The previous orchestrator stopped, so this session was started to replace it. Load the "
-    f"`herdr` skill and follow its Orchestrator section. Coordinate, and hand the work itself to "
-    f"fresh sessions. Start from your notes in {STATUS}, check every tab against them, then tell "
-    "Kevin in a few lines what you picked up and what needs him."
+    "`herdr` skill and follow its Orchestrator section. Coordinate, and hand the work itself to "
+    "fresh sessions. Rebuild the picture from each worktree's ticket-graph checkpoint, Linear, GitHub "
+    "and the tabs, then tell Kevin in a few lines what you picked up and what needs him."
 )
 
 
@@ -100,8 +100,7 @@ def claim():
     subprocess.run([TAB, "name", LABEL], check=False)
     type_into(me, f"/rename {NAME}")
     type_into(me, f"/color {COLOR}")
-    os.makedirs(STATE, exist_ok=True)
-    print(f"you are the orchestrator; your notes live in {STATUS}")
+    print("you are the orchestrator; rebuild the picture from checkpoints, Linear, GitHub and the tabs")
     return 0
 
 
