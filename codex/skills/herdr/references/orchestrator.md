@@ -39,7 +39,10 @@ Kevin's request to restore or run orchestration.
    Herdr name and crown identify the role.
 
 Keep the notes current with Latest, Needs Kevin, Done, Left, and a Sessions
-table. Reconcile updates against git, GitHub, Linear, and CI before acting.
+table. `~/.local/state/orchestrator` is your own local git repo: if it isn't
+one yet, run `git init` there. Never add a remote. Commit after each update,
+so `git log -p STATUS.md` shows what changed; don't save `STATUS.before-*.md`
+copies. Reconcile updates against git, GitHub, Linear, and CI before acting.
 Inspect tabs with `herdr agent read <pane> --source recent-unwrapped --lines 200`.
 Send a stalled session one clear, scoped nudge using `herdr agent prompt`.
 
