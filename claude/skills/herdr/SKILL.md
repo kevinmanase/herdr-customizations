@@ -7,6 +7,10 @@ description: Keep your Herdr tab's name and status emoji current, flag asks for 
 
 Kevin runs his coding agents in Herdr tabs and scans the tab strip to see which ones need him. Keep your tab's label honest and readable at a glance. Emoji carry the state; a few words carry the task.
 
+## Source
+
+This skill comes from [kevinmanase/herdr-customizations](https://github.com/kevinmanase/herdr-customizations), along with the `herdr-tab` and `herdr-orchestrator` hooks. To change any of them, edit the repo clone, open a PR, and once it merges copy the files again on each machine as `docs/setup.md` describes. Never patch one machine's installed copy alone.
+
 ## Your tab's label
 
 The label reads `<status> <name>`, for example `⏳ 🧪 login bug`. When you need Kevin, it reads `<❓ or ❗> <the ask> · <name>`.
