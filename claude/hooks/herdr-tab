@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+"""Show a Claude session's state on its Herdr tab, and make it obvious when Kevin is needed.
+
+    herdr-tab ask "<question for Kevin>"         ❓ he needs to answer or decide
+    herdr-tab request "<what Kevin must do>"     ❗ he needs to act: log in, approve, check his phone
+    herdr-tab name "<short name>"                set the name, keep the status
+    herdr-tab status working|done                set the status (clears an ask)
+    herdr-tab clear --approved-pane ID --approved-session ID   clear only the target Kevin approved
+    herdr-tab hook <event>                       Claude Code hooks call this with the hook JSON on stdin
+
+Labels read "⏳ <name>" (working), "✅ <name>" (done), or "❓ <ask> · <name>" / "❗ <ask> · <name>"
+when Kevin is needed. Needing Kevin also pops a Herdr notification. His next message, or his
+answer to a question dialog, clears it. A /clear resets the label to "⚪ ready", not ✅: a
+checkmark reads as done, and a cleared session has done nothing. (Herdr's own screen detection
+already marks Claude's dialogs blocked; a reported state doesn't override it on a live Claude
+pane, so this doesn't try.) Outside Herdr it does nothing. It never fails a hook: every error
+exits 0.
+
+Optional: with TYPESAFE_API_KEY set, or a key in ~/.config/typesafe/api-key, the Stop hook asks
+Jev whether the turn's last message waits on Kevin, so an ask the agent forgot to flag still
+shows. Only that message's last 1,500 characters are sent.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
+READY_LABEL = READY + " ready"  # a cleared tab has no task, so no name
+NEEDS = {"question": QUESTION, "request": REQUEST}
+SEPARATOR = " · "
+HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
+ORCHESTRATOR = os.path.expanduser("~/.claude/hooks/herdr-orchestrator")
+ORCHESTRATOR_LABEL = "👑 orchestrator"
+JEV_URL = "https://api.typesafe.ai/v1/systemone"
+KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
+
+FLAG_HOW = (
+    '`~/.claude/hooks/herdr-tab ask "<question>"` for a question or decision, or '
+    '`~/.claude/hooks/herdr-tab request "<what he must do>"` for something he has to do '
+    "(log in, approve, check his phone)."
+)
+SESSION_REMINDER = (
+    "You're running in a Herdr tab that Kevin watches to see which agents need him. "
+    "Once you know what this task is, name the tab in a few words, led by a stage emoji: "
+    '`~/.claude/hooks/herdr-tab name "🔍 login bug"`. Rename it when the work '
+    "reaches a new stage. Hooks show ⏳ while you work and ✅ when you stop. Before you stop "
+    "to wait on Kevin, flag it so his tab lights up: " + FLAG_HOW + " Details: the `herdr` skill."
+)
+TURN_REMINDER = "Herdr: if you end this turn needing Kevin, flag it first: " + FLAG_HOW
+
+
+def herdr(*args, timeout=5):
+    result = subprocess.run([HERDR, *args], capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"herdr {args[0]} failed")
+    return json.loads(result.stdout or "{}").get("result", {})
+
+
+def current_tab():
+    # The pane's tab, not the inherited HERDR_TAB_ID: a moved pane keeps its old env.
+    try:
+        return herdr("pane", "get", os.environ["HERDR_PANE_ID"])["pane"]["tab_id"]
+    except Exception:
+        return os.environ.get("HERDR_TAB_ID")
+
+
+def parse(label):
+    """Return (status, ask, name) from a label."""
+    label = label.strip()
+    if label == READY_LABEL:
+        return READY, "", ""
+    for status in (WORKING, DONE, READY, QUESTION, REQUEST):
+        if label.startswith(status):
+            rest = label[len(status) :].strip()
+            if status in (QUESTION, REQUEST) and SEPARATOR in rest:
+                ask, name = rest.split(SEPARATOR, 1)
+                return status, ask, name.strip()
+            return status, "", rest
+    return None, "", label
+
+
+def clean(text, limit):
+    text = " ".join(str(text).replace("·", "-").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def render(tab, status, ask, name):
+    if status in (QUESTION, REQUEST):
+        label = f"{status} {ask or 'needs you'}" + (SEPARATOR + name if name else "")
+    elif status == READY and not name:
+        label = READY_LABEL
+    else:
+        label = " ".join(part for part in (status, name) if part)
+    if label:
+        herdr("tab", "rename", tab, label)
+
+
+def read(tab):
+    return parse(herdr("tab", "get", tab)["tab"].get("label") or "")
+
+
+def orchestrator():
+    """The orchestrator's Herdr agent (see herdr-orchestrator), or None."""
+    try:
+        return herdr("agent", "get", "orchestrator")["agent"]
+    except Exception:
+        return None
+
+
+def reclaim_crown():
+    """If this pane's tab still wears the crown, take the orchestrator's name back: the agent, or None."""
+    # A restart clears a pane's Herdr name but not its tab's label, so a crowned tab without the name is
+    # the orchestrator coming back. (Its SessionStart used to run `ensure`, which started a spare.) Herdr
+    # sees a new process as an agent about half a second after it starts; the retries cover a slow box.
+    try:
+        if read(current_tab())[2] != ORCHESTRATOR_LABEL:
+            return None
+        for _ in range(6):
+            try:
+                herdr("agent", "rename", os.environ["HERDR_PANE_ID"], "orchestrator")
+                return orchestrator()
+            except RuntimeError:
+                time.sleep(0.5)
+    except Exception:
+        pass
+    return None
+
+
+def orchestrator_context(agent):
+    if agent and agent["pane_id"] == os.environ.get("HERDR_PANE_ID"):
+        return (
+            "You are the orchestrator (👑): the one session that keeps track of all the others for Kevin. "
+            "Load the `herdr` skill and follow its Orchestrator section. Your notes are in "
+            "~/.local/state/orchestrator/STATUS.md."
+        )
+    if agent:
+        return (
+            "The orchestrator (👑) is the Claude session named `orchestrator`. When you merge, get blocked, "
+            "finish, or start another session, SendMessage it one line."
+        )
+    return "No orchestrator is running in Herdr, so one is being started."
+
+
+def same_clear_target(agent, pane, session, terminal):
+    return (
+        agent.get("agent") == "claude"
+        and agent.get("pane_id") == pane
+        and agent.get("terminal_id") == terminal
+        and (agent.get("agent_session") or {}).get("value") == session
+    )
+
+
+def clear_idle(pane, session, terminal):
+    settled = herdr("agent", "wait", pane, "--timeout", "30000", timeout=32)["agent"]
+    current = herdr("agent", "get", pane)["agent"]
+    if not same_clear_target(current, pane, session, terminal):
+        return
+    if current.get("agent_status") not in ("idle", "done"):
+        return
+    if current.get("state_change_seq") != settled.get("state_change_seq"):
+        return
+    if read(current["tab_id"])[0] in (QUESTION, REQUEST):
+        return
+    herdr("agent", "prompt", pane, "/clear")
+
+
+def clear_when_done(approved_pane=None, approved_session=None):
+    if not approved_pane or not approved_session:
+        raise RuntimeError(
+            "Clear requires Kevin's explicit approval for the identified tab and session. "
+            "After approval, pass --approved-pane and --approved-session. Leaving chat open."
+        )
+    me = herdr("agent", "get", approved_pane)["agent"]
+    terminal = me.get("terminal_id")
+    if not terminal or not same_clear_target(me, approved_pane, approved_session, terminal):
+        raise RuntimeError("Approved session identity no longer matches; leaving chat open")
+    if read(me["tab_id"])[0] in (QUESTION, REQUEST):
+        raise RuntimeError("Resolve the pending ask before clearing this session")
+    subprocess.Popen(
+        [
+            sys.executable,
+            os.path.abspath(__file__),
+            "_clear-idle",
+            approved_pane,
+            approved_session,
+            terminal,
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def forget_name():
+    # A cleared session has no task, so a note meant for the old one mustn't reach it by that name:
+    # it would wake with no context and redo finished work. The Herdr name goes now, before the tab
+    # reads ⚪ ready. The Claude session is renamed once /clear has finished, unless the pane has
+    # been named for new work by then, as `herdr-orchestrator next` does. Many sessions named `ready` is fine.
+    # (It's typed in because Claude Code ignores a SessionStart hook's sessionTitle on a clear.)
+    pane = os.environ["HERDR_PANE_ID"]
+    herdr("agent", "rename", pane, "--clear")
+    script = (
+        f'sleep 2; "{HERDR}" agent get "{pane}" | jq -e ".result.agent.name == null" >/dev/null && '
+        f'"{HERDR}" agent prompt "{pane}" "/rename ready" >/dev/null 2>&1'
+    )
+    subprocess.Popen(
+        ["sh", "-c", script],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def ensure_orchestrator():
+    # Detached: starting one takes longer than a hook may run.
+    subprocess.Popen(
+        [ORCHESTRATOR, "ensure"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def needs(kind, ask):
+    tab = current_tab()
+    status, old_ask, name = read(tab)
+    ask = clean(ask, 48) or "needs you"
+    if (status, old_ask) != (NEEDS[kind], ask):
+        render(tab, NEEDS[kind], ask, name)
+    who = clean(name, 40) or "An agent"
+    herdr(
+        "notification",
+        "show",
+        f"{NEEDS[kind]} {who} needs you",
+        "--body",
+        ask,
+        "--sound",
+        "request",
+    )
+
+
+def set_status(status, clear_needs=True):
+    tab = current_tab()
+    current, ask, name = read(tab)
+    if not clear_needs and current in (QUESTION, REQUEST):
+        return
+    if current != status:
+        render(tab, status, "", name)
+
+
+def set_name(name):
+    tab = current_tab()
+    status, ask, _ = read(tab)
+    _, _, name = parse(name)
+    render(tab, status, ask, clean(name, 60))
+
+
+def last_assistant_text(payload):
+    text = payload.get("last_assistant_message")
+    if isinstance(text, str) and text.strip():
+        return text
+    path = payload.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as transcript:
+            transcript.seek(0, os.SEEK_END)
+            transcript.seek(max(0, transcript.tell() - 400_000))
+            lines = transcript.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        content = entry.get("message", {}).get("content") if entry.get("type") == "assistant" else None
+        if isinstance(content, list):
+            texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+            if any(t.strip() for t in texts):
+                return "\n".join(texts)
+    return ""
+
+
+def jev_says_waiting(text):
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if not key and os.path.exists(KEY_FILE):
+        with open(KEY_FILE, encoding="utf-8") as handle:
+            key = handle.read().strip()
+    if not key or not text.strip():
+        return False
+    body = {
+        "state": text[-1500:],
+        "model": "jev-latest",
+        "questions": {
+            "waits_on_reader": {
+                "type": "noul",
+                "instructions": "Does this message end by waiting on the reader before work can continue?",
+                "criteria": {
+                    "true": "Asks the reader a question, or for a decision, approval or action",
+                    "false": "Reports results or status; nothing is needed from the reader",
+                },
+            }
+        },
+    }
+    request = urllib.request.Request(
+        JEV_URL,
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=4) as response:
+        return float(json.load(response)["answers"]["waits_on_reader"]["noul"]) >= 0.5
+
+
+def dialog_ask(payload):
+    tool = payload.get("tool_name")
+    if tool == "ExitPlanMode":
+        return "approve the plan"
+    questions = (payload.get("tool_input") or {}).get("questions") or [{}]
+    first = questions[0] if isinstance(questions[0], dict) else {}
+    return first.get("question") or first.get("header") or "answer the question"
+
+
+def hook(event):
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        payload = {}
+    if event == "remind":  # synchronous: its output joins the turn's context
+        print(TURN_REMINDER)
+    elif event == "session":
+        agent = orchestrator()
+        reclaimed = not agent and reclaim_crown()
+        agent = reclaimed or agent
+        context = SESSION_REMINDER + " " + orchestrator_context(agent)
+        if reclaimed:
+            context += (
+                " A restart cleared this pane's Herdr name. This tab still wears the crown, so the hook "
+                "gave the name back: you are still the orchestrator."
+            )
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "additionalContext": context,
+                    }
+                }
+            )
+        )
+        tab = current_tab()
+        status, _, name = read(tab)
+        if payload.get("source") == "clear":  # the old task's name went with its context; the role didn't
+            mine = agent and agent["pane_id"] == os.environ.get("HERDR_PANE_ID")
+            if not mine:
+                forget_name()
+            render(tab, READY, "", ORCHESTRATOR_LABEL if mine else "")
+        elif status in (WORKING, QUESTION, REQUEST):  # left over from a session that never finished
+            render(tab, DONE, "", name)
+        if not agent:
+            ensure_orchestrator()
+    elif event in ("prompt", "resume"):
+        set_status(WORKING)
+    elif event == "question":
+        needs("question", dialog_ask(payload))
+    elif event == "notify":
+        # A question dialog also raises a generic permission notification; keep the specific ask.
+        if read(current_tab())[0] not in (QUESTION, REQUEST):
+            needs("request", payload.get("message") or "approve a permission prompt")
+    elif event == "stop":
+        if not orchestrator():
+            ensure_orchestrator()
+        text = last_assistant_text(payload)
+        try:
+            waiting = jev_says_waiting(text)
+        except Exception:
+            waiting = False
+        if waiting:
+            tab = current_tab()
+            if read(tab)[0] not in (QUESTION, REQUEST):
+                lines = [line for line in text.strip().splitlines() if line.strip()]
+                needs("question", lines[-1] if lines else "reply needed")
+                return
+        set_status(DONE, clear_needs=False)
+
+
+def main():
+    if os.environ.get("HERDR_ENV") != "1" or len(sys.argv) < 2:
+        return
+    command, args = sys.argv[1], sys.argv[2:]
+    if command in ("ask", "request") and args:
+        needs("question" if command == "ask" else "request", " ".join(args))
+    elif command == "status" and args:
+        if args[0] == "question":  # older spelling of `ask`
+            needs("question", " ".join(args[1:]) or "needs you")
+        elif args[0] in ("working", "done"):
+            set_status(WORKING if args[0] == "working" else DONE)
+    elif command == "name" and args:
+        set_name(" ".join(args))
+    elif command == "clear":
+        import argparse
+
+        parser = argparse.ArgumentParser(prog="herdr-tab clear")
+        parser.add_argument("--approved-pane")
+        parser.add_argument("--approved-session")
+        approved = parser.parse_args(args)
+        clear_when_done(approved.approved_pane, approved.approved_session)
+    elif command == "_clear-idle" and len(args) == 3:
+        clear_idle(*args)
+    elif command == "hook" and args:
+        hook(args[0])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(f"herdr-tab: {error}", file=sys.stderr)
+        if len(sys.argv) > 1 and sys.argv[1] != "hook":
+            sys.exit(1)
+    sys.exit(0)

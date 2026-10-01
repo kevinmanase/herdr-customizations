@@ -1,0 +1,4 @@
+interface:
+  display_name: "Herdr"
+  short_description: "Keep Herdr tab names and status current"
+  default_prompt: "Use $herdr to keep this Codex tab named and flag when you need me."

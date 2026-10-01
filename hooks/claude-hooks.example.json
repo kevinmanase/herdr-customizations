@@ -1,22 +1,84 @@
 {
   "hooks": {
-    "SessionStart": [{
-      "matcher": "startup|resume|clear|compact|fork",
-      "hooks": [{"type": "command", "command": "python3 \"/ABSOLUTE/HOME/.claude/skills/herdr-labels/scripts/herdr_tab.py\" hook claude", "timeout": 15}]
-    }],
-    "UserPromptSubmit": [{
-      "hooks": [{"type": "command", "command": "python3 \"/ABSOLUTE/HOME/.claude/skills/herdr-labels/scripts/herdr_tab.py\" hook claude", "timeout": 15}]
-    }],
-    "PreToolUse": [{
-      "matcher": "AskUserQuestion",
-      "hooks": [{"type": "command", "command": "python3 \"/ABSOLUTE/HOME/.claude/skills/herdr-labels/scripts/herdr_tab.py\" hook claude", "timeout": 15}]
-    }],
-    "PermissionRequest": [{
-      "matcher": ".*",
-      "hooks": [{"type": "command", "command": "python3 \"/ABSOLUTE/HOME/.claude/skills/herdr-labels/scripts/herdr_tab.py\" hook claude", "timeout": 15}]
-    }],
-    "Stop": [{
-      "hooks": [{"type": "command", "command": "python3 \"/ABSOLUTE/HOME/.claude/skills/herdr-labels/scripts/herdr_tab.py\" hook claude", "timeout": 15}]
-    }]
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook session",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook remind",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook prompt",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook question",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook resume",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook notify",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook stop",
+            "timeout": 15,
+            "async": true
+          }
+        ]
+      }
+    ]
   }
 }
