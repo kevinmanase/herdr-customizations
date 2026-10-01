@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""Keep the shared Claude or Codex orchestrator visible without replacing a live owner.
+
+    herdr-orchestrator who       print the orchestrator's tab and state; exit 1 if there is none
+    herdr-orchestrator claim     make the calling Claude session the orchestrator, taking the role over
+    herdr-orchestrator ensure    recover only a confirmed vacant 👑 tab; defer uncertain identity
+    herdr-orchestrator next      start the next queued brief in a ⚪ ready Claude tab, or a new tab
+
+The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
+agents, so there can never be two. Claiming also names its tab "👑 orchestrator", renames its Claude
+session `orchestrator` (SendMessage reaches it by that name) and turns its prompt bar yellow.
+A restart can clear display metadata without ending the assigned conversation. `ensure`
+starts no spare while a crowned tab still runs any agent. It can recover a confirmed vacant
+crowned shell, but a missing crown requires owner reconciliation rather than a new tab.
+The shared coordinator's notes live in STATUS.
+
+`next` takes the first brief from QUEUE (<order>-<agent-name>.md, one self-contained brief each).
+It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
+New sessions start in HERDR_WORK_DIR, or the current directory.
+"""
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+NAME = "orchestrator"
+CROWN = "👑"
+LABEL = f"{CROWN} {NAME}"
+COLOR = "yellow"
+HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
+TAB = os.path.expanduser("~/.claude/hooks/herdr-tab")
+STATE = os.path.expanduser("~/.local/state/orchestrator")
+STATUS = os.path.join(STATE, "STATUS.md")
+WORK_DIR = os.path.expanduser(os.environ.get("HERDR_WORK_DIR") or os.getcwd())
+QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herdr-fleet/queue")
+MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
+GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
+BRIEF = (
+    "You are the orchestrator: the one Claude session in Herdr that keeps track of all the others "
+    "for Kevin. The previous orchestrator stopped, so this session was started to replace it. Load the "
+    f"`herdr` skill and follow its Orchestrator section. Coordinate, and hand the work itself to "
+    f"fresh sessions. Start from your notes in {STATUS}, check every tab against them, then tell "
+    "Kevin in a few lines what you picked up and what needs him."
+)
+
+
+def herdr(*args, timeout=10):
+    result = subprocess.run([HERDR, *args], capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"herdr {args[0]} failed")
+    return json.loads(result.stdout or "{}").get("result", {})
+
+
+def live():
+    """The orchestrator's Herdr agent, or None."""
+    try:
+        return herdr("agent", "get", NAME, timeout=5)["agent"]
+    except RuntimeError as error:
+        # An unavailable server is not evidence that the assigned owner exited.
+        if json.loads(str(error)).get("error", {}).get("code") == "agent_not_found":
+            return None
+        raise
+
+
+def who():
+    agent = live()
+    if not agent:
+        print("no orchestrator is running")
+        return 1
+    label = herdr("tab", "get", agent["tab_id"])["tab"].get("label", "")
+    print(f"{label} (tab {agent['tab_id']}, pane {agent['pane_id']}, {agent['agent_status']})")
+    return 0
+
+
+def type_into(pane, text):
+    # /rename and /color run at once even while the session is busy, so this never waits on a turn.
+    try:
+        herdr("agent", "prompt", pane, text)
+    except Exception as error:
+        print(f"couldn't send {text!r} to {pane}: {error}", file=sys.stderr)
+
+
+def claim():
+    me = os.environ.get("HERDR_PANE_ID")
+    if not me:
+        print("not in a Herdr pane", file=sys.stderr)
+        return 2
+    old = live()
+    if old and old["pane_id"] != me:
+        herdr("agent", "rename", old["pane_id"], "--clear")
+        herdr("tab", "rename", old["tab_id"], "✅ 💤 ex-orchestrator")
+        type_into(old["pane_id"], "/rename ex-orchestrator")
+        print(f"took the role over from {old['tab_id']}; tell that session with SendMessage")
+    if not old or old["pane_id"] != me:
+        herdr("agent", "rename", me, NAME)
+    subprocess.run([TAB, "name", LABEL], check=False)
+    type_into(me, f"/rename {NAME}")
+    type_into(me, f"/color {COLOR}")
+    os.makedirs(STATE, exist_ok=True)
+    print(f"you are the orchestrator; your notes live in {STATUS}")
+    return 0
+
+
+def available_mb():
+    """Memory a new agent can use: MemAvailable on Linux, free + inactive pages on macOS."""
+    try:
+        with open("/proc/meminfo") as meminfo:
+            return next(int(line.split()[1]) // 1024 for line in meminfo if line.startswith("MemAvailable"))
+    except FileNotFoundError:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, check=True).stdout
+        page = int(re.search(r"page size of (\d+)", out).group(1))
+        kinds = ("free", "inactive", "speculative")
+        pages = sum(int(re.search(rf"Pages {kind}:\s+(\d+)", out).group(1)) for kind in kinds)
+        return pages * page // 2**20
+
+
+def crowned_panes():
+    """The panes of tabs that still wear the crown: where the orchestrator lives, or lived."""
+    tabs = herdr("tab", "list")["tabs"]
+    crowned = {tab["tab_id"] for tab in tabs if (tab.get("label") or "").endswith(LABEL)}
+    return [pane for pane in herdr("pane", "list")["panes"] if pane["tab_id"] in crowned]
+
+
+def bare_shell(pane):
+    """Whether only the pane's shell runs in its foreground, so a command can be typed there."""
+    info = herdr("pane", "process-info", "--pane", pane["pane_id"])["process_info"]
+    return info["foreground_process_group_id"] == info["shell_pid"]
+
+
+def ensure():
+    if live():
+        return 0
+    time.sleep(GRACE)  # a restart clears the name, and the session takes it back when it starts
+    os.makedirs(STATE, exist_ok=True)
+    with open(os.path.join(STATE, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if live():  # it came back, or another session started one while we waited for the lock
+            return 0
+        crowned = crowned_panes()
+        if any(pane.get("agent") for pane in crowned):
+            return 0
+        if not crowned:
+            print(
+                "Coordinator name/crown missing; reconcile the existing owner before starting a replacement.",
+                file=sys.stderr,
+            )
+            return 3
+        avail = available_mb()
+        if avail < MIN_MB:
+            herdr(
+                "notification",
+                "show",
+                f"❗ No {NAME} in Herdr",
+                "--body",
+                f"Only {avail} MB free. Close a finished tab, then run ~/.claude/hooks/herdr-orchestrator ensure",
+                "--sound",
+                "request",
+            )
+            return 3
+        # A dead orchestrator is replaced in its own tab, so no second crown appears beside it.
+        shell = next((pane for pane in crowned if bare_shell(pane)), None)
+        if shell:
+            pane, tab_id = shell["pane_id"], shell["tab_id"]
+            if shell.get("cwd") != WORK_DIR:
+                herdr("pane", "run", pane, f"cd {WORK_DIR}")
+        elif crowned:
+            herdr(
+                "notification",
+                "show",
+                f"❗ No {NAME} in Herdr",
+                "--body",
+                f"Coordinator identity is uncertain in {crowned[0]['tab_id']}; verify the existing owner.",
+                "--sound",
+                "request",
+            )
+            return 3
+        herdr(
+            "agent",
+            "start",
+            NAME,
+            "--kind",
+            "claude",
+            "--pane",
+            pane,
+            "--timeout",
+            "120000",
+            "--",
+            "-n",
+            NAME,
+            timeout=150,
+        )
+        type_into(NAME, f"/color {COLOR}")
+        herdr("agent", "prompt", NAME, BRIEF)
+        herdr(
+            "notification",
+            "show",
+            f"{CROWN} New {NAME}",
+            "--body",
+            f"The last one was gone, so one started in tab {tab_id}.",
+        )
+    return 0
+
+
+def next_brief():
+    """Start the next queued brief in a fresh Claude session, reusing a ⚪ ready tab first."""
+    os.makedirs(os.path.join(QUEUE, "started"), exist_ok=True)
+    with open(os.path.join(QUEUE, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        briefs = sorted(f for f in os.listdir(QUEUE) if f.endswith(".md"))
+        if not briefs:
+            print("fleet: queue empty")
+            return 0
+        path = os.path.join(QUEUE, briefs[0])
+        name = briefs[0][: -len(".md")].split("-", 1)[-1]
+        with open(path, encoding="utf-8") as handle:
+            brief = handle.read()
+        # A cleared session is already running and fresh, so reusing one costs no memory.
+        ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
+        pane = next(
+            (
+                p["pane_id"]
+                for p in herdr("pane", "list")["panes"]
+                if p["tab_id"] in ready
+                and p.get("agent") == "claude"
+                and p.get("cwd") == WORK_DIR
+                and p.get("agent_status") in ("idle", "done")
+            ),
+            None,
+        )
+        if pane:
+            herdr("agent", "rename", pane, name)
+            type_into(name, f"/rename {name}")
+        else:
+            avail = available_mb()
+            if avail < MIN_MB:
+                print(f"fleet: {avail} MB available, {MIN_MB} needed; {name} stays queued")
+                return 3
+            workspace = os.environ["HERDR_WORKSPACE_ID"]
+            tab = herdr(
+                "tab",
+                "create",
+                "--workspace",
+                workspace,
+                "--label",
+                name,
+                "--cwd",
+                WORK_DIR,
+                "--no-focus",
+            )
+            pane = tab["root_pane"]["pane_id"]
+            herdr(
+                "agent",
+                "start",
+                name,
+                "--kind",
+                "claude",
+                "--pane",
+                pane,
+                "--timeout",
+                "120000",
+                "--",
+                "-n",
+                name,
+                timeout=150,
+            )
+        herdr("agent", "prompt", name, brief)
+        os.rename(path, os.path.join(QUEUE, "started", briefs[0]))
+        print(f"fleet: started {name} in pane {pane}")
+    return 0
+
+
+def main():
+    if os.environ.get("HERDR_ENV") != "1":
+        print("not running inside Herdr", file=sys.stderr)
+        return 2
+    command = sys.argv[1] if len(sys.argv) > 1 else "who"
+    commands = {"who": who, "claim": claim, "ensure": ensure, "next": next_brief}
+    if command not in commands:
+        print(__doc__.strip())
+        return 2
+    return commands[command]()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

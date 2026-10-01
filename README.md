@@ -2,9 +2,9 @@
 
 **One orchestrator. Named workers. Questions that stay visible.**
 
-My tab naming setup for [Herdr](https://github.com/herdrdev/herdr), packaged
-as a skill, a small Python helper, and lifecycle hooks for Claude Code and
-Codex. The agents keep their native tools and sessions. The labels help me
+My tab naming and orchestrator setup for [Herdr](https://github.com/herdrdev/herdr),
+packaged as skills, small Python helpers, and lifecycle hooks for Claude Code
+and Codex. The agents keep their native tools and sessions. The labels help me
 see what they are doing and which ones need me.
 
 I mainly talk to one orchestrator. It coordinates the workers and brings
@@ -15,9 +15,8 @@ find in a busy workspace.
 
 <img src="docs/screenshots/herdr-orchestrator.png" alt="Kevin's Herdr sidebar with a crowned orchestrator, named Claude and Codex workers, stage icons, and a pending question" width="560" />
 
-*Screenshot from my working setup. The portable helpers in this repository
-use the same naming convention. Herdr's own sidebar indicators are separate
-from the label prefixes added by these hooks.*
+*Screenshot from my working setup. Herdr's own sidebar indicators are
+separate from the label prefixes added by these hooks.*
 
 The tab labels follow **status + stage + short task**:
 
@@ -45,94 +44,76 @@ whether a task is finished.
 
 ## Keep the question and the task
 
-An agent can keep working while a question is pending. The label preserves
+An agent can keep working while a question is pending. The label keeps
 both parts:
 
 ```text
 ⏳ 🛠️ login fix
 ❓ ship today? · 🛠️ login fix
-❓ ship today? · 🧪 login tests
 ```
 
-Renaming, tool completion, a new prompt, and Stop leave the question visible.
-Once it is answered, the agent calls `resolve` and the label returns to
-`⏳ 🧪 login tests`. Action requests work the same way.
+A turn ending leaves the question visible. My next message, or my answer
+to a question dialog, clears it and the tab goes back to `⏳`.
+
+## Why the hooks inject context
+
+A skill that the agent has to remember to load doesn't get used. So the
+Claude `SessionStart` hook tells every session to name its tab and how,
+and each prompt carries a one-line reminder to flag asks before stopping.
+The Codex helper does the same through its hook output.
+
+## One orchestrator
+
+Exactly one Claude session is the orchestrator. Its Herdr agent is named
+`orchestrator` and its tab reads `👑 orchestrator`. Its session hook tells it
+the role, and tells every other session to report to it.
+
+- `herdr-orchestrator claim` makes the calling session the orchestrator.
+- `herdr-orchestrator who` prints where it is.
+- `herdr-orchestrator ensure` runs from the hooks. If the orchestrator is
+  gone, it restarts it in its crowned tab, but never alongside a live one.
+- `herdr-orchestrator next` hands the next queued brief to a `⚪ ready`
+  Claude tab, or opens a new tab when there is enough free memory.
+
+The orchestrator coordinates. It hands investigations, fixes and watching CI
+to fresh sessions, and keeps its notes in
+`~/.local/state/orchestrator/STATUS.md`.
 
 ## Set it up
 
-Requirements: [Herdr](https://github.com/herdrdev/herdr), Python 3.11+, and
-Claude Code or Codex running inside a Herdr pane. The helper uses Python's
-standard library and the Herdr CLI. Command shapes were checked with Herdr 0.9.1.
+Requirements: [Herdr](https://github.com/herdrdev/herdr) (checked with 0.9.1),
+Python 3.11+, `jq`, and Claude Code or Codex running inside a Herdr pane.
+Linux and macOS both work. Follow the [setup guide](docs/setup.md).
 
-```sh
-git clone https://github.com/kevinmanase/herdr-customizations.git
-cd herdr-customizations
-```
+- [Claude skill](claude/skills/herdr/SKILL.md) and hooks:
+  [herdr-tab](claude/hooks/herdr-tab), [herdr-orchestrator](claude/hooks/herdr-orchestrator)
+- [Codex skill](codex/skills/herdr/SKILL.md) and
+  [helper](codex/skills/herdr/scripts/herdr-tab.py)
+- Hook examples for [Claude Code](hooks/claude-hooks.example.json) and
+  [Codex](hooks/codex-hooks.example.json)
 
-Follow the [setup guide](docs/setup.md) to copy the skill into your user skills
-directory and merge the hook definitions into your existing settings.
-
-- [Naming skill](skills/herdr-labels/SKILL.md)
-- [Python helper](skills/herdr-labels/scripts/herdr_tab.py)
-- [Claude Code hook example](hooks/claude-hooks.example.json)
-- [Codex hook example](hooks/codex-hooks.example.json)
-
-After installing the Codex skill, these commands run inside its Herdr pane:
-
-```sh
-helper="${CODEX_HOME:-$HOME/.codex}/skills/herdr-labels/scripts/herdr_tab.py"
-python3 "$helper" name "🛠️ login fix"
-python3 "$helper" status working
-python3 "$helper" ask "ship today?"
-```
-
-The setup guide also covers optional notifications, hook review, and removal.
-Hooks return `{}` without approving permissions. They leave conversations
-open and fail open when Herdr is unavailable.
-
-## Make it yours
-
-Edit the installed [skill](skills/herdr-labels/SKILL.md) to change stage icons,
-task naming, or the orchestrator convention. These are instructions for the
-agent; the helper does not assign roles or infer the task from a transcript.
-If you replace the crown symbol, update the helper's startup preservation
-check too so the orchestrator name survives a fresh session.
-
-The [helper](skills/herdr-labels/scripts/herdr_tab.py) owns the status markers
-in `MARKERS` and the field length in `MAX_NAME`. Change it alongside the skill
-if you want different prefixes. Set `HERDR_LABEL_NOTIFICATIONS=1` before
-launching the agent to enable notifications when a tab enters an attention
-state. Use `HERDR_BIN_PATH` if Herdr is outside the hook process's PATH.
-
-Use one naming helper per tab. If you already have custom naming hooks,
-compare and merge the behavior you want. Keep Herdr's built-in session
-integration in place.
+Hooks never approve permissions and fail open when Herdr is unavailable.
+Conversations are cleared only after I approve the exact pane and session.
 
 ## Pair it with Agent Wire
 
 I use [Agent Wire](https://github.com/kevinmanase/agent-wire) for a shared work
-list and messages between enrolled Claude and Codex sessions. Herdr labels
-make the workspace readable; Agent Wire gives the agents a way to coordinate.
-
-Both projects work independently. A crown or pane ID is not an Agent Wire
-identity, and the tab's turn-finished checkmark is separate from a task report.
+list and messages between Claude and Codex sessions. The orchestrator reads
+that list to see what each session reports. The labels and hooks work without
+it.
 
 ## Development
 
-Development tools can live outside the checkout:
-
 ```sh
-python3 -m venv "$HOME/.cache/herdr-customizations-dev/venv"
-dev="$HOME/.cache/herdr-customizations-dev/venv/bin"
-"$dev/python" -m pip install -r requirements-dev.txt
-"$dev/python" -m pytest -q
-"$dev/ruff" check .
-"$dev/ruff" format --check .
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
 ```
 
-Tests use a fake Herdr command boundary. They check pending asks, renaming,
-orchestrator names, hook output, stale pane references, timeouts, and error
-handling without touching live tabs. See [the tests](tests/test_herdr_labels.py).
+[The tests](tests/test_herdr.py) run the helpers against a
+[fake Herdr](tests/fake_herdr.py), never live tabs.
 
 ## License
 
