@@ -5,6 +5,7 @@ docs.typesafe.ai (quick start and API reference): answers.<question> holds `type
 `confidence` and `probabilities`. It wasn't checked against a live key.
 """
 
+import inspect
 import json
 import runpy
 from pathlib import Path
@@ -112,6 +113,30 @@ def test_routing_without_a_key_sends_nothing_and_asks_kevin(herdr, jev, lanes, q
     assert jev.requests == []
     assert brief.exists()
     assert herdr.label().startswith("❓")
+
+
+def write_config(tmp_path, data):
+    path = tmp_path / ".config/team-floor/config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+
+
+@pytest.mark.parametrize("env_key, sent", [("", "cfg-key"), ("env-key", "env-key")])
+def test_routing_takes_the_key_from_the_environment_then_the_config(herdr, jev, lanes, queue, tmp_path, env_key, sent):
+    write_config(tmp_path, {"jev": {"api_key": " cfg-key "}})
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    result = route(herdr, jev, brief, key=env_key)
+    assert result.returncode == 0, result.stderr
+    assert jev.headers[0]["Authorization"] == f"Bearer {sent}"
+
+
+def test_the_stop_hook_reads_the_key_from_the_team_floor_config(herdr, jev, tmp_path):
+    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
+    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_URL=jev.url)
+    assert jev.headers[0]["Authorization"] == "Bearer cfg-key"
 
 
 @pytest.mark.parametrize("reply", [529, {"answers": {}}])
@@ -418,6 +443,101 @@ def test_the_stop_hook_uses_the_same_jev_endpoint(herdr, jev):
     herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
     assert jev.requests[0]["state"] == "Should I merge it now?"
     assert herdr.label().startswith("❓")
+
+
+CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
+COPIES = [ORCHESTRATOR, TAB, CODEX_TAB]
+
+
+def test_the_three_typesafe_key_copies_are_identical():
+    assert len({inspect.getsource(runpy.run_path(str(script))["typesafe_key"]) for script in COPIES}) == 1
+
+
+@pytest.mark.parametrize("script", COPIES, ids=["orchestrator", "herdr-tab", "codex-herdr-tab"])
+def test_every_copy_finds_the_typesafe_key_the_same_way(script, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "ts").write_text("repo-key")
+    monkeypatch.chdir(repo)
+
+    def key():
+        problems = []
+        return runpy.run_path(str(script))["typesafe_key"](problems), problems
+
+    assert key() == ("", [])
+    default_file = tmp_path / ".config/typesafe/api-key"
+    default_file.parent.mkdir(parents=True)
+    default_file.write_text("file-key\n")
+    assert key() == ("file-key", [])
+    folder = tmp_path / ".config/team-floor"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_text('{"jev": {"api_key": "x"},}')
+    found, problems = key()
+    assert found == "file-key" and "config.json" in problems[0]
+    (folder / "ts").write_text("folder-key")
+    write_config(tmp_path, {"jev": {"api_key_file": "ts"}})
+    assert key() == ("folder-key", [])
+    (folder / "ts").write_bytes(b"\xff\xfe not text")
+    found, problems = key()
+    assert found == "" and "UnicodeDecodeError" in problems[0]
+    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
+    assert key() == ("cfg-key", [])
+    write_config(tmp_path, {"jev": {"api_key": "FAKE-KEY\nnote"}})
+    found, problems = key()
+    assert found == "" and "control characters" in problems[0]
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-key")
+    assert key() == ("env-key", [])
+
+
+def test_route_never_echoes_a_bad_key(herdr, jev, lanes, queue, tmp_path):
+    write_config(tmp_path, {"jev": {"api_key": "FAKE-KEY\nnote"}})
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    result = route(herdr, jev, brief, key="")
+    assert "FAKE-KEY" not in result.stdout + result.stderr
+    assert "no TypeSafe key" in result.stdout and not jev.requests
+
+
+def test_route_says_why_there_is_no_key(herdr, jev, lanes, queue, tmp_path):
+    (tmp_path / ".config/team-floor/config.json").write_text('{"jev": {"api_key": "K"},}')
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    result = route(herdr, jev, brief, key="")
+    assert "can't read" in result.stdout and "config.json" in result.stdout
+
+
+def test_the_stop_hook_skips_jev_when_an_ask_already_shows(herdr, jev):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "❓ merge now? · login fix"})
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
+    assert not jev.requests
+    assert herdr.label().startswith("❓")
+
+
+def test_the_stop_hook_keeps_a_label_that_changed_while_jev_answered(herdr, jev):
+    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+    jev.before_reply = lambda: herdr.set_state(tabs={**herdr.state["tabs"], "t1": "⏳ login fix"})
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
+    assert jev.requests and herdr.label() == "⏳ login fix"
+
+
+def test_the_stop_hook_can_turn_jev_off(herdr, jev):
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    env = {"TYPESAFE_API_KEY": "test-key", "TYPESAFE_API_URL": jev.url, "HERDR_JEV_ENABLED": "0"}
+    herdr.run(TAB, "hook", "stop", stdin=payload, **env)
+    assert not jev.requests
+
+
+def test_the_codex_helper_honours_the_jev_url(jev, monkeypatch):
+    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.setenv("TYPESAFE_API_URL", jev.url)
+    monkeypatch.delenv("HERDR_JEV_ENABLED", raising=False)
+    assert runpy.run_path(str(CODEX_TAB))["jev_says_waiting"]("Should I merge it now?") is True
+    assert jev.headers[0]["Authorization"] == "Bearer test-key"
 
 
 def test_the_lead_label_matches_the_orchestrator():

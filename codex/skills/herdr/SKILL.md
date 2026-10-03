@@ -136,7 +136,9 @@ permissions. Question hooks use Codex's `request_user_input` and
 text asks yourself; a hook cannot reliably infer intent from prose.
 
 Optional Jev fallback: like the Claude setup, the Stop hook can classify the last
-assistant message when `TYPESAFE_API_KEY` or `~/.config/typesafe/api-key` exists.
+assistant message when there's a TypeSafe key: `TYPESAFE_API_KEY`, `jev.api_key` in
+`~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default
+`~/.config/typesafe/api-key`).
 Only the last 1,500 characters go to TypeSafe. No key means no classifier request.
 Set `HERDR_JEV_ENABLED=0` to disable it even when a key exists. Explicit ❓/❗ flags
 take precedence. Codex's `last_assistant_message` field is used directly; the
