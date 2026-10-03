@@ -378,7 +378,7 @@ def typesafe_key(problems=None):
 
 
 def jev_says_waiting(text):
-    if os.environ.get("HERDR_JEV_ENABLED") == "0" or not text.strip():
+    if not text.strip():
         return False
     key = typesafe_key()
     if not key:

@@ -524,18 +524,10 @@ def test_the_stop_hook_keeps_a_label_that_changed_while_jev_answered(herdr, jev)
     assert jev.requests and herdr.label() == "⏳ login fix"
 
 
-def test_the_stop_hook_can_turn_jev_off(herdr, jev):
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    env = {"TYPESAFE_API_KEY": "test-key", "TYPESAFE_API_URL": jev.url, "HERDR_JEV_ENABLED": "0"}
-    herdr.run(TAB, "hook", "stop", stdin=payload, **env)
-    assert not jev.requests
-
-
 def test_the_codex_helper_honours_the_jev_url(jev, monkeypatch):
     jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
     monkeypatch.setenv("TYPESAFE_API_URL", jev.url)
-    monkeypatch.delenv("HERDR_JEV_ENABLED", raising=False)
     assert runpy.run_path(str(CODEX_TAB))["jev_says_waiting"]("Should I merge it now?") is True
     assert jev.headers[0]["Authorization"] == "Bearer test-key"
 

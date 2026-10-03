@@ -65,7 +65,7 @@ Rename when you judge the old name has stopped describing the work: a new stage,
 
 ### Optional: Jev
 
-With a TypeSafe key set, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin, so a question you forgot to flag still shows ❓. The key can be `TYPESAFE_API_KEY` in the environment, `jev.api_key` in `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default `~/.config/typesafe/api-key`), checked in that order. `HERDR_JEV_ENABLED=0` turns the Stop hook's Jev check off. The hook sends Jev only the last 1,500 characters of that message. Without a key, nothing leaves the machine.
+With a TypeSafe key set, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin, so a question you forgot to flag still shows ❓. The key can be `TYPESAFE_API_KEY` in the environment, `jev.api_key` in `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default `~/.config/typesafe/api-key`), checked in that order. The hook sends Jev only the last 1,500 characters of that message. Without a key, nothing leaves the machine.
 
 ## Finish; clear only with Kevin's approval
 

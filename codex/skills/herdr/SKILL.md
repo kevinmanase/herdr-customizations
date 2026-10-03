@@ -140,8 +140,7 @@ assistant message when there's a TypeSafe key: `TYPESAFE_API_KEY`, `jev.api_key`
 `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default
 `~/.config/typesafe/api-key`).
 Only the last 1,500 characters go to TypeSafe. No key means no classifier request.
-Set `HERDR_JEV_ENABLED=0` to disable it even when a key exists. Explicit ❓/❗ flags
-take precedence. Codex's `last_assistant_message` field is used directly; the
+Explicit ❓/❗ flags take precedence. Codex's `last_assistant_message` field is used directly; the
 helper does not depend on Claude transcript formats.
 
 ## Inspect tabs or start agents when Kevin asks
