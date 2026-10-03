@@ -134,9 +134,9 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
   - probability 0.60 or more: moves the brief to `~/.cache/herdr-fleet/queue/<lane>/`;
   - 0.40 up to 0.60: moves it, and starts it with a "Lane to confirm" line;
   - below 0.40, `unclear`, or Jev unavailable (no key, an error, a timeout): leaves the brief where it is, flags Kevin with `herdr-tab ask`, and exits 3. Pick the lane with Kevin and move the file yourself. Routing never waits on Jev.
-- **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged or 💤 parked. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It never starts a second lead, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back.
+- **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged or 💤 parked. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It starts the lead without holding the queue, and never starts a second one, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back. If `lanes.json` can't be read, `route` and `leads` report it, and `next` still runs the main queue.
 - **Your view:** keep one line per lane. When Kevin asks about a led lane, ask its lead over Agent Wire (or SendMessage `lead-<lane>`) instead of reading its sessions yourself. `next` skips a lane that has a lead.
-- **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back. The lead runs `herdr-orchestrator handback <lane>`, which drops its `lead-<lane>` name, renames its tab `💤 ex-lead-<lane>` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
+- **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back; if the lane gets busy again first, it asks afresh next time. The lead runs `herdr-orchestrator handback <lane>`, which drops its `lead-<lane>` name, renames its tab `💤 ex-lead-<lane>` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
 - **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.)
 
 ### If you are a lane lead
@@ -144,7 +144,7 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - You coordinate one lane, the way the orchestrator coordinates the rest. Keep your tab named `🧭 lead-<lane>`.
 - Start each brief in your lane's queue with `~/.claude/hooks/herdr-orchestrator next --lane <lane>`. Its session reports to you instead of the orchestrator.
 - Send the orchestrator one line when something in the lane merges, gets blocked or needs Kevin. Answer its questions about the lane in detail.
-- When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy. Afterwards, leave your conversation open.
+- When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy, and keeps you the lead if it can't rename your tab. Afterwards, leave your conversation open.
 
 ## Opening tabs and starting agents
 

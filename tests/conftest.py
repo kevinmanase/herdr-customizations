@@ -72,6 +72,7 @@ def jev():
 
     class Jev:
         reply = copy.deepcopy(JEV_CHOICE)
+        before_reply = None
         requests = []
         headers = []
 
@@ -86,6 +87,8 @@ def jev():
             body = self.rfile.read(int(self.headers["Content-Length"]))
             fake.requests.append(json.loads(body))
             fake.headers.append(dict(self.headers))
+            if fake.before_reply:
+                fake.before_reply()
             if isinstance(fake.reply, int):
                 self.send_response(fake.reply)
                 self.end_headers()

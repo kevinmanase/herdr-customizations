@@ -6,6 +6,7 @@ docs.typesafe.ai (quick start and API reference): answers.<question> holds `type
 """
 
 import json
+import runpy
 from pathlib import Path
 
 import pytest
@@ -226,7 +227,7 @@ def test_a_restarted_lead_takes_its_name_back(herdr):
     herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 🧭 lead-api"})
     result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert "you are still lead-api" in context
+    assert "you are lead-api, a lane lead" in context
     assert herdr.state["agents"]["lead-api"]["pane_id"] == "p1"
 
 
@@ -298,3 +299,128 @@ def test_next_leaves_a_led_lane_to_its_lead(herdr, lanes, queue):
     assert brief.startswith("Task 1.")
     assert "send it your one-line updates" in brief
     assert (queue / "api/started/01-task-1.md").exists()
+
+
+def test_a_brief_started_while_jev_answers_is_not_routed(herdr, jev, lanes, queue):
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    (queue / "started").mkdir()
+    jev.before_reply = lambda: brief.rename(queue / "started" / brief.name)  # `next` got there first
+    result = route(herdr, jev, brief)
+    assert result.returncode == 1
+    assert "started or moved while Jev answered" in result.stderr
+    assert not (queue / "api").exists()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"answers": {"lane": "api"}},
+        {"answers": {"lane": {"choice": ["api"], "probabilities": {}}}},
+        {"answers": {"lane": {"choice": "api", "probabilities": {"api": 1.7}}}},
+        {"answers": {"lane": {"choice": "search", "probabilities": {"search": 0.9}}}},
+        ["not", "an", "object"],
+    ],
+)
+def test_a_malformed_reply_counts_as_jev_unavailable(herdr, jev, lanes, queue, reply):
+    jev.reply = reply
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix it.")
+    result = route(herdr, jev, brief)
+    assert result.returncode == 3, result.stderr
+    assert "rule: ask Kevin (Jev unavailable:" in result.stdout
+    assert brief.exists()
+
+
+def test_a_bad_lane_file_does_not_stop_the_main_queue(herdr, lanes, queue):
+    lanes.write_text("{")
+    (queue / "01-eng-1.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert "skipping lane queues" in result.stderr
+    assert started(herdr) == ["eng-1"]
+    assert herdr.run(ORCHESTRATOR, "leads").returncode == 2
+
+
+def test_a_lead_is_asked_again_after_the_lane_gets_busy(herdr, lanes, queue):
+    be_lead(herdr)
+    (queue / "api").mkdir()
+    (queue / "api/01-task-1.md").write_text("Task 1.")
+    herdr.run(ORCHESTRATOR, "leads")
+    for n in range(2, 5):
+        (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
+    assert "lead-api in tab t1" in herdr.run(ORCHESTRATOR, "leads").stdout
+    for n in range(2, 5):
+        (queue / f"api/0{n}-task-{n}.md").unlink()
+    herdr.run(ORCHESTRATOR, "leads")
+    assert len(prompts(herdr, "lead-api")) == 2
+
+
+def test_a_lead_keeps_the_lane_if_its_tab_cannot_be_renamed(herdr, lanes, queue):
+    be_lead(herdr)
+    herdr.set_state(fail={"tab rename": "tab_not_found"})
+    result = herdr.run(ORCHESTRATOR, "handback", "api")
+    assert result.returncode == 1
+    assert "keeps the lane" in result.stderr
+    assert herdr.state["agents"]["lead-api"]["pane_id"] == "p1"
+    assert prompts(herdr, "orchestrator") == []
+
+
+def test_a_lead_starts_without_holding_the_queue(herdr, lanes, queue):
+    (queue / "api").mkdir()
+    for n in range(1, 5):
+        (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
+    herdr.run(ORCHESTRATOR, "leads")
+    assert started(herdr) == ["lead-api"]
+    assert herdr.state["queue_lock_free_during_start"] == [True]
+
+
+def test_open_sessions_take_one_look_at_herdr(herdr, lanes, queue):
+    (queue / "api/started").mkdir(parents=True)
+    for n in range(1, 30):
+        (queue / f"api/started/{n:02}-eng-{n}.md").write_text(f"Task {n}.")
+    herdr.run(ORCHESTRATOR, "leads")
+    calls = herdr.state["calls"]
+    assert calls.count(["agent", "list"]) == 1
+    assert not any(call[:2] == ["agent", "get"] and call[2].startswith("eng-") for call in calls)
+
+
+def test_a_herdr_error_message_that_is_not_json_is_reported(herdr, lanes, queue):
+    herdr.set_state(fail={"agent get lead-api": "raw"})
+    result = herdr.run(ORCHESTRATOR, "leads")
+    assert result.returncode == 1
+    assert result.stderr.strip() == "herdr-orchestrator leads: connection refused"
+
+
+@pytest.mark.parametrize("held", [{"pane_id": "p1", "tab_id": "t1"}, {"pane_id": "p9", "tab_id": "t9"}])
+def test_a_lead_name_already_held_is_left_alone(herdr, held):
+    herdr.set_state(
+        tabs={**herdr.state["tabs"], "t1": "✅ 🧭 lead-api"},
+        agents={**herdr.state["agents"], "lead-api": held},
+    )
+    result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "lane lead" not in context
+    assert herdr.state["agents"]["lead-api"] == held
+    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
+
+
+def test_a_herdr_error_is_not_a_missing_lead(herdr):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 🧭 lead-api"}, fail={"agent get lead-api": "timeout"})
+    result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
+    assert "lane lead" not in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
+
+
+def test_the_stop_hook_uses_the_same_jev_endpoint(herdr, jev):
+    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
+    assert jev.requests[0]["state"] == "Should I merge it now?"
+    assert herdr.label().startswith("❓")
+
+
+def test_the_lead_label_matches_the_orchestrator():
+    orchestrator = runpy.run_path(str(ORCHESTRATOR))
+    tab = runpy.run_path(str(TAB))
+    assert tab["LEAD_LABEL"].pattern == f"{orchestrator['LEAD']} (lead-{orchestrator['LANE_ID'].pattern})"

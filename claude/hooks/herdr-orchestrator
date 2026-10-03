@@ -103,7 +103,11 @@ def agent_named(name):
         return herdr("agent", "get", name, timeout=5)["agent"]
     except RuntimeError as error:
         # An unavailable server is not evidence that the assigned owner exited.
-        if json.loads(str(error)).get("error", {}).get("code") == "agent_not_found":
+        try:
+            code = json.loads(str(error)).get("error", {}).get("code")
+        except (ValueError, AttributeError):
+            code = None
+        if code == "agent_not_found":
             return None
         raise
 
@@ -252,11 +256,15 @@ def ensure():
 
 
 @contextlib.contextmanager
-def queue_lock():
-    os.makedirs(QUEUE, exist_ok=True)
-    with open(os.path.join(QUEUE, ".lock"), "w") as lock:
+def locked(folder, name=".lock"):
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, name), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+def queue_lock():
+    return locked(QUEUE)
 
 
 def briefs_in(folder):
@@ -315,7 +323,12 @@ def next_brief(*args):
             folders = [os.path.join(QUEUE, lane)]
         else:  # the main queue, then lanes that have no lead to run them
             folders = [QUEUE]
-            folders += [os.path.join(QUEUE, ln["id"]) for ln in load_lanes() if not agent_named(f"lead-{ln['id']}")]
+            try:
+                lanes = load_lanes()
+            except LanesUnreadable as error:  # an optional, shared file mustn't stop the main queue
+                print(f"fleet: {error}; skipping lane queues", file=sys.stderr)
+                lanes = []
+            folders += [os.path.join(QUEUE, ln["id"]) for ln in lanes if not agent_named(f"lead-{ln['id']}")]
         queued = sorted((brief, folder) for folder in folders for brief in briefs_in(folder))
         if not queued:
             print("fleet: queue empty")
@@ -337,15 +350,20 @@ def next_brief(*args):
     return 0
 
 
+class LanesUnreadable(Exception):
+    pass
+
+
 def load_lanes():
-    """The lanes in LANES, as [{"id", "name", "about"}]; none if the file is missing."""
+    """The lanes in LANES, as [{"id", "name", "about"}]; none if the file is missing. Raises LanesUnreadable."""
     try:
         with open(LANES, encoding="utf-8") as handle:
             lanes = json.load(handle).get("lanes") or []
+        iter(lanes)
     except FileNotFoundError:
         return []
-    except (OSError, ValueError, AttributeError) as error:
-        sys.exit(f"lanes: can't read {LANES}: {error}")
+    except (OSError, ValueError, AttributeError, TypeError) as error:
+        raise LanesUnreadable(f"can't read {LANES}: {error}") from None
     valid = []
     for lane in lanes:
         lane_id = lane.get("id") if isinstance(lane, dict) else None
@@ -395,14 +413,26 @@ def ask_jev(brief, lanes):
     )
     try:
         with urllib.request.urlopen(request, timeout=4) as response:
-            answer = json.load(response)["answers"]["lane"]
+            reply = json.load(response)
+    except (OSError, ValueError) as error:
+        raise JevUnavailable(f"{type(error).__name__}: {error}") from None
+    return read_choice(reply, criteria)
+
+
+def read_choice(reply, options):
+    """The pick and its probability from a Jev reply, or JevUnavailable if the reply has another shape."""
+    # Documented: {"answers": {"lane": {"type": "choice", "choice", "confidence", "probabilities": {...}}}}
+    try:
+        answer = reply["answers"]["lane"]
         choice = answer["choice"]
         # The probability of the pick itself; confidence only if a reply leaves that out.
         probability = float((answer.get("probabilities") or {}).get(choice, answer.get("confidence")))
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        raise JevUnavailable(f"{type(error).__name__}: {error}") from None
-    if choice not in criteria:
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise JevUnavailable(f"unexpected reply ({type(error).__name__}: {error})") from None
+    if not isinstance(choice, str) or choice not in options:
         raise JevUnavailable(f"picked {choice!r}, which isn't a lane")
+    if not 0 <= probability <= 1:
+        raise JevUnavailable(f"probability {probability} is out of range")
     return choice, probability
 
 
@@ -426,7 +456,11 @@ def route(path=None):
     if not os.path.isfile(path):
         print(f"route: no brief at {path}", file=sys.stderr)
         return 2
-    lanes = load_lanes()
+    try:
+        lanes = load_lanes()
+    except LanesUnreadable as error:
+        print(f"route: {error}", file=sys.stderr)
+        return 2
     if not lanes:
         print(f"route: no lanes in {LANES}", file=sys.stderr)
         return 2
@@ -446,12 +480,19 @@ def route(path=None):
         return 3
     print(f"lane: {choice}, probability: {shown}, rule: {rule} ({why})")
     lane = next(lane for lane in lanes if lane["id"] == choice)
-    if rule == "confirm":
-        brief = (
-            f"Lane to confirm: Jev put this brief in the {lane.get('name') or choice} lane with probability "
-            f"{shown}. Check that it belongs there before you start it.\n\n" + brief
-        )
     with queue_lock():
+        # Jev took a while, and `next` may have started the brief meanwhile; it's only ours if it's still here.
+        try:
+            with open(path, encoding="utf-8") as handle:
+                brief = handle.read()
+        except FileNotFoundError:
+            print(f"route: {path} was started or moved while Jev answered; nothing routed", file=sys.stderr)
+            return 1
+        if rule == "confirm":
+            brief = (
+                f"Lane to confirm: Jev put this brief in the {lane.get('name') or choice} lane with probability "
+                f"{shown}. Check that it belongs there before you start it.\n\n" + brief
+            )
         folder = os.path.join(QUEUE, choice)
         os.makedirs(folder, exist_ok=True)
         target = os.path.join(folder, name)
@@ -462,7 +503,8 @@ def route(path=None):
             handle.write(brief)
         os.remove(path)
         print(f"moved to {target}")
-        print(check_lane(lane))
+        line, busy = survey(lane)
+    print(f"{line}; {start_lead(lane)}" if busy else line)
     return 0
 
 
@@ -470,15 +512,15 @@ def lane_items(lane_id):
     """A lane's open work: its queued briefs, and the started ones whose session is still open."""
     folder = os.path.join(QUEUE, lane_id)
     queued = [agent_name(brief) for brief in briefs_in(folder)]
-    sessions, labels = [], None
-    for brief in briefs_in(os.path.join(folder, "started")):
-        agent = agent_named(agent_name(brief))
-        if not agent:
-            continue
-        if labels is None:
-            labels = {t["tab_id"]: t.get("label") or "" for t in herdr("tab", "list")["tabs"]}
-        if not any(mark in labels.get(agent.get("tab_id"), "") for mark in FINISHED):
-            sessions.append(agent_name(brief))
+    started = [agent_name(brief) for brief in briefs_in(os.path.join(folder, "started"))]
+    sessions = []
+    if started:  # one look at Herdr, however many briefs the lane has ever started
+        agents = {a.get("name"): a for a in herdr("agent", "list")["agents"] if a.get("name")}
+        labels = {t["tab_id"]: t.get("label") or "" for t in herdr("tab", "list")["tabs"]}
+        for name in started:
+            agent = agents.get(name)
+            if agent and not any(mark in labels.get(agent.get("tab_id"), "") for mark in FINISHED):
+                sessions.append(name)
     return queued, sessions
 
 
@@ -486,63 +528,81 @@ def lost_lead(lead):
     """A tab that still reads as the lead's and runs an agent, though no agent has the lead's name."""
     label = f"{LEAD} {lead}"
     tabs = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if (t.get("label") or "").endswith(label)}
+    if not tabs:
+        return None
     return next((p["tab_id"] for p in herdr("pane", "list")["panes"] if p["tab_id"] in tabs and p.get("agent")), None)
 
 
-def check_lane(lane):
-    """Start a lead for a busy lane, or ask a quiet lane's lead to hand it back. One line about the lane."""
+def survey(lane):
+    """One line about a lane, and whether it needs a lead. Asks a quiet lane's lead, once, to hand it back."""
     lane_id, lead = lane["id"], f"lead-{lane['id']}"
     queued, sessions = lane_items(lane_id)
     count = len(queued) + len(sessions)
     line = f"{lane_id}: {len(queued)} queued, {len(sessions)} open"
     asked = os.path.join(QUEUE, lane_id, ".handback-asked")
     agent = agent_named(lead)
-    if agent:
-        if count <= HANDBACK_AT and not os.path.exists(asked):
-            herdr(
-                "agent",
-                "prompt",
-                lead,
-                f"Status from orchestrator: lane {lane_id} is down to {count} open item. Between steps, "
-                f"run `~/.claude/hooks/herdr-orchestrator handback {lane_id}`.",
-            )
-            open(asked, "w").close()
-            return f"{line}; asked {lead} to hand it back"
-        return f"{line}; {lead} in tab {agent['tab_id']}"
-    if count < LEAD_AT:
-        return f"{line}; no lead"
-    stray = lost_lead(lead)
-    if stray:
-        return f"{line}; tab {stray} reads {LEAD} {lead} but lost the name, so no second lead starts"
-    label = f"{LEAD} {lead}"
-    pane = start_session(lead, label)
-    if not pane:
-        return f"{line}; {lead} waits for memory"
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(asked)
-    queue = os.path.join(QUEUE, lane_id)
-    about = lane.get("about") or lane.get("name") or lane_id
-    brief = LEAD_BRIEF.format(
-        lead=lead,
-        name=lane.get("name") or lane_id,
-        about=about,
-        label=label,
-        queue=queue,
-        lane=lane_id,
-        handback=HANDBACK_AT,
+    if not agent:
+        return (line, True) if count >= LEAD_AT else (f"{line}; no lead", False)
+    if count > HANDBACK_AT:  # busy again: ask afresh the next time it's quiet
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(asked)
+        return f"{line}; {lead} in tab {agent['tab_id']}", False
+    if os.path.exists(asked):
+        return f"{line}; {lead} asked to hand it back", False
+    herdr(
+        "agent",
+        "prompt",
+        lead,
+        f"Status from orchestrator: lane {lane_id} is down to {count} open item. Between steps, "
+        f"run `~/.claude/hooks/herdr-orchestrator handback {lane_id}`.",
     )
-    herdr("agent", "prompt", lead, brief)
-    return f"{line}; started {lead} in pane {pane}"
+    open(asked, "w").close()
+    return f"{line}; asked {lead} to hand it back", False
+
+
+def start_lead(lane):
+    """Start a busy lane's lead unless it has one; what happened."""
+    # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
+    # meanwhile. The lane's own lock keeps two of these from racing.
+    lane_id, lead = lane["id"], f"lead-{lane['id']}"
+    label = f"{LEAD} {lead}"
+    with locked(os.path.join(QUEUE, lane_id), ".lead.lock"):
+        if agent_named(lead):
+            return f"{lead} is already running"
+        stray = lost_lead(lead)
+        if stray:
+            return f"tab {stray} reads {label} but lost the name, so no second lead starts"
+        pane = start_session(lead, label)
+        if not pane:
+            return f"{lead} waits for memory"
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
+        brief = LEAD_BRIEF.format(
+            lead=lead,
+            name=lane.get("name") or lane_id,
+            about=lane.get("about") or lane.get("name") or lane_id,
+            label=label,
+            queue=os.path.join(QUEUE, lane_id),
+            lane=lane_id,
+            handback=HANDBACK_AT,
+        )
+        herdr("agent", "prompt", lead, brief)
+    return f"started {lead} in pane {pane}"
 
 
 def leads():
-    lanes = load_lanes()
+    try:
+        lanes = load_lanes()
+    except LanesUnreadable as error:
+        print(f"leads: {error}", file=sys.stderr)
+        return 2
     if not lanes:
         print(f"no lanes in {LANES}")
         return 0
     with queue_lock():
-        for lane in lanes:
-            print(check_lane(lane))
+        surveyed = [(lane, *survey(lane)) for lane in lanes]
+    for lane, line, busy in surveyed:
+        print(f"{line}; {start_lead(lane)}" if busy else line)
     return 0
 
 
@@ -561,10 +621,18 @@ def handback(lane_id=None):
         if len(queued) + len(sessions) > HANDBACK_AT:
             print(f"lane {lane_id} still has {len(queued)} queued and {len(sessions)} open; keep leading it")
             return 1
+        # The tab first: a tab that still reads as the lead's, with nobody holding the name, would stop
+        # any new lead for the lane. herdr-tab keeps the status and any ask.
+        try:
+            renamed = subprocess.run([TAB, "name", f"💤 ex-{lead}"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            renamed = subprocess.CompletedProcess([], 1, "", str(error))
+        if renamed.returncode != 0:
+            print(f"couldn't rename this tab, so {lead} keeps the lane: {renamed.stderr.strip()}", file=sys.stderr)
+            return 1
         herdr("agent", "rename", me, "--clear")
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
-    subprocess.run([TAB, "name", f"💤 ex-{lead}"], check=False)  # keeps the status and any ask
     type_into(me, f"/rename ex-{lead}")
     left = ", ".join(queued + sessions) or "nothing"
     if live():
@@ -592,7 +660,11 @@ def main():
     if command not in commands or len(args) > commands[command][1]:
         print(__doc__.strip())
         return 2
-    return commands[command][0](*args)
+    try:
+        return commands[command][0](*args)
+    except RuntimeError as error:  # a failed herdr call: report it in a line, not a traceback
+        print(f"herdr-orchestrator {command}: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""A fake `herdr` CLI. State lives in the JSON file named by FAKE_HERDR_STATE; calls are logged."""
+"""A fake `herdr` CLI. State lives in the JSON file named by FAKE_HERDR_STATE; calls are logged.
 
+state["fail"] maps the start of a command ("tab rename") to the error code it fails with, or "raw"
+for an error that isn't JSON. `agent start` records whether the fleet queue's lock was free.
+"""
+
+import fcntl
 import json
 import os
 import sys
@@ -20,6 +25,29 @@ def done(result=None, error=None):
         sys.exit(1)
     print(json.dumps({"result": result or {}}))
     sys.exit(0)
+
+
+for prefix, code in state.get("fail", {}).items():
+    if " ".join(args).startswith(prefix):
+        if code == "raw":
+            with open(path, "w") as handle:
+                json.dump(state, handle)
+            print("connection refused", file=sys.stderr)
+            sys.exit(1)
+        done(error=code)
+
+
+def queue_lock_free():
+    lock = os.path.join(os.environ.get("HERDR_FLEET_QUEUE", ""), ".lock")
+    if not os.path.exists(lock):
+        return True
+    with open(lock) as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return True
 
 
 def pane(pane_id):
@@ -43,6 +71,8 @@ match args:
         state["tabs"][tab] = rest[rest.index("--label") + 1]
         state["panes"].append({"pane_id": f"{tab}:p1", "tab_id": tab})
         done({"tab": {"tab_id": tab}, "root_pane": {"pane_id": f"{tab}:p1"}})
+    case ["agent", "list"]:
+        done({"agents": [{**agent, "name": name} for name, agent in state.get("agents", {}).items()]})
     case ["agent", "get", name]:
         agent = state.get("agents", {}).get(name)
         done({"agent": agent}) if agent else done(error="agent_not_found")
@@ -59,6 +89,7 @@ match args:
     case ["agent", "start", name, *rest]:
         pane_id = rest[rest.index("--pane") + 1]
         pane(pane_id)["agent"] = "claude"
+        state.setdefault("queue_lock_free_during_start", []).append(queue_lock_free())
         state.setdefault("agents", {})[name] = {**pane(pane_id), "name": name}
         done({"agent": state["agents"][name]})
     case ["agent" | "notification", *_]:

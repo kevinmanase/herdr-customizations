@@ -42,7 +42,7 @@ context.
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
 | `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
 | `TYPESAFE_API_KEY` or `~/.config/typesafe/api-key` | unset | lets the Stop hook ask Jev whether a reply waits on you, and `route` ask Jev for a brief's lane |
-| `TYPESAFE_API_URL` | TypeSafe's endpoint | where Jev requests go; the tests point it at a local fake |
+| `TYPESAFE_API_URL` | TypeSafe's endpoint | where both Jev calls go (the Stop hook and `route`); the tests point it at a local fake |
 | `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |
 
 Without a TypeSafe key nothing leaves the machine. With one, the Stop hook
