@@ -41,6 +41,7 @@ context.
 | `HERDR_FLEET_QUEUE` | `~/.cache/herdr-fleet/queue` | briefs for `herdr-orchestrator next` |
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
 | `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
+| `HERDR_JEV_ENABLED` | unset | set to `0` to stop the Stop hook asking Jev |
 | `TYPESAFE_API_KEY`, then `jev.api_key` in `~/.config/team-floor/config.json` (keep it `chmod 600`), then the file named by `jev.api_key_file` (relative to that folder), by default `~/.config/typesafe/api-key` | unset | lets the Stop hook ask Jev whether a reply waits on you, and `route` ask Jev for a brief's lane |
 | `TYPESAFE_API_URL` | TypeSafe's endpoint | where both Jev calls go (the Stop hook and `route`); the tests point it at a local fake |
 | `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |

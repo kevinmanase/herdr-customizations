@@ -410,9 +410,9 @@ def typesafe_key(problems=None):
                     key = handle.read().strip()
             except FileNotFoundError:
                 if custom:
-                    problems.append(f"{path} doesn't exist")
+                    problems.append("the file named by jev.api_key_file doesn't exist")
             except (OSError, ValueError) as error:
-                problems.append(f"can't read {path} ({type(error).__name__})")
+                problems.append(f"can't read the TypeSafe key file ({type(error).__name__})")
     if key and (" " in key or not key.isprintable()):
         problems.append("the TypeSafe key has spaces or control characters, so it isn't used")
         return ""
