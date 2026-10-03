@@ -272,31 +272,46 @@ def clear_when_done(approved_pane=None, approved_session=None):
     print("Scheduled /clear when this turn settles (30-second limit).")
 
 
-def typesafe_key():
-    """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then jev.api_key_file
-    (default ~/.config/typesafe/api-key). Keep this identical in herdr-orchestrator, herdr-tab and
-    codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py checks all three."""
+def typesafe_key(problems=None):
+    """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then the file named by
+    jev.api_key_file (relative paths start in ~/.config/team-floor), by default ~/.config/typesafe/api-key.
+    Returns "" when there's no usable key, and adds what went wrong to `problems`. Keep this identical in
+    herdr-orchestrator, herdr-tab and codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py compares them."""
+    problems = [] if problems is None else problems
+    folder = os.path.expanduser("~/.config/team-floor")
     key = os.environ.get("TYPESAFE_API_KEY", "").strip()
-    if key:
-        return key
-    try:
-        with open(os.path.expanduser("~/.config/team-floor/config.json"), encoding="utf-8") as handle:
-            jev = json.load(handle)["jev"]
-    except (OSError, ValueError, KeyError, TypeError):
+    if not key:
         jev = {}
-    if not isinstance(jev, dict):
-        jev = {}
-    key = jev.get("api_key")
-    if isinstance(key, str) and key.strip():
-        return key.strip()
-    key_file = jev.get("api_key_file")
-    if not isinstance(key_file, str) or not key_file:
-        key_file = "~/.config/typesafe/api-key"
-    try:
-        with open(os.path.expanduser(key_file), encoding="utf-8") as handle:
-            return handle.read().strip()
-    except OSError:
+        try:
+            with open(os.path.join(folder, "config.json"), encoding="utf-8") as handle:
+                jev = json.load(handle).get("jev", {})
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, AttributeError) as error:
+            problems.append(f"can't read {folder}/config.json ({type(error).__name__})")
+        jev = jev if isinstance(jev, dict) else {}
+        key = jev.get("api_key") if isinstance(jev.get("api_key"), str) else ""
+        key = key.strip()
+        named = jev.get("api_key_file")
+        custom = isinstance(named, str) and bool(named)
+        if named is not None and not custom:
+            problems.append("jev.api_key_file in config.json must be a path")
+        if not key:
+            path = os.path.expanduser("~/.config/typesafe/api-key")
+            if custom:
+                path = os.path.join(folder, os.path.expanduser(named))
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    key = handle.read().strip()
+            except FileNotFoundError:
+                if custom:
+                    problems.append(f"{path} doesn't exist")
+            except (OSError, ValueError) as error:
+                problems.append(f"can't read {path} ({type(error).__name__})")
+    if key and (" " in key or not key.isprintable()):
+        problems.append("the TypeSafe key has spaces or control characters, so it isn't used")
         return ""
+    return key
 
 
 def jev_says_waiting(text):
@@ -306,7 +321,7 @@ def jev_says_waiting(text):
     if not key:
         return False
     request = urllib.request.Request(
-        "https://api.typesafe.ai/v1/systemone",
+        os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone",
         data=json.dumps(
             {
                 "state": text[-1500:],
