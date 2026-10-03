@@ -75,10 +75,26 @@ the role, and tells every other session to report to it.
   gone, it restarts it in its crowned tab, but never alongside a live one.
 - `herdr-orchestrator next` hands the next queued brief to a `⚪ ready`
   Claude tab, or opens a new tab when there is enough free memory.
+- `herdr-orchestrator route <brief>` asks Jev which lane a brief belongs to,
+  and `herdr-orchestrator leads` gives a busy lane its own lead (below).
 
 The orchestrator coordinates. It hands investigations, fixes and watching CI
 to fresh sessions. It keeps no notes file: it rebuilds its picture each time
 from ticket-graph checkpoints, Linear, GitHub and the tabs.
+
+## Lanes and leads
+
+One orchestrator holding every lane's detail fills its context. So the work
+is split into lanes, listed in `~/.config/team-floor/lanes.json`, and a busy
+lane gets a lead: a Claude session named `lead-<lane>` that runs that lane's
+queue. The orchestrator stays the one way in and keeps one line per lane.
+
+Jev picks a brief's lane; fixed rules decide what to do with the pick. A
+sure pick (0.60 or more) routes the brief. A middling one (0.40 to 0.60)
+routes it marked "lane to confirm". Anything weaker, `unclear`, or no Jev at
+all leaves the brief unrouted and asks me. A lane with 4 or more open items
+gets a lead. When it's down to 1, the lead hands it back and its
+conversation stays open.
 
 ## Set it up
 

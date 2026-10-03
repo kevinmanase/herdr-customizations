@@ -41,10 +41,14 @@ context.
 | `HERDR_FLEET_QUEUE` | `~/.cache/herdr-fleet/queue` | briefs for `herdr-orchestrator next` |
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
 | `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
-| `TYPESAFE_API_KEY` or `~/.config/typesafe/api-key` | unset | lets the Stop hook ask Jev whether a reply waits on you |
+| `TYPESAFE_API_KEY` or `~/.config/typesafe/api-key` | unset | lets the Stop hook ask Jev whether a reply waits on you, and `route` ask Jev for a brief's lane |
+| `TYPESAFE_API_URL` | TypeSafe's endpoint | where Jev requests go; the tests point it at a local fake |
+| `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |
 
 Without a TypeSafe key nothing leaves the machine. With one, the Stop hook
-sends the last 1,500 characters of the agent's last message.
+sends the last 1,500 characters of the agent's last message, and
+`herdr-orchestrator route` sends the last 1,500 characters of the brief with
+the lane names and descriptions.
 
 ## Start the orchestrator
 
@@ -57,6 +61,13 @@ In the Claude session you want as the orchestrator:
 From then on, the hooks keep exactly one running. To hand it work, write a
 self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md` and
 run `~/.claude/hooks/herdr-orchestrator next`.
+
+With lanes set up, route the brief first, and check the lanes now and then:
+
+```sh
+~/.claude/hooks/herdr-orchestrator route ~/.cache/herdr-fleet/queue/01-webhook-fix.md
+~/.claude/hooks/herdr-orchestrator leads
+```
 
 ## Try the labels
 

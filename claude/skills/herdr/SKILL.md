@@ -58,6 +58,7 @@ Rename when you judge the old name has stopped describing the work: a new stage,
   - 💥 failing
   - 💤 parked
   - 👑 the orchestrator's tab only (see below)
+  - 🧭 a lane lead's tab only (see below)
 - **Kevin's own name:** if Kevin typed the current name and it still fits, keep his words. Adding a stage emoji is fine.
 
 `herdr-tab` does nothing outside Herdr, so these commands are always safe to run.
@@ -118,10 +119,32 @@ Exactly one Claude session in Herdr is the orchestrator. It keeps track of every
 - **Watch every tab:** if Agent Wire is installed, start from its self-reported list, `agent-wire --state ~/.local/state/agent-wire sessions --table`, which shows each session's task and status and whether it's stale. Then read a tab with `herdr agent read <pane> --source recent-unwrapped --lines 200`. Check the facts yourself (GitHub, Linear, CI) before you act on them. Send a stalled session one clear SendMessage nudge.
 - **Prompt boxes:** dim text in a Claude prompt box is Claude Code's prompt suggestion, not something Kevin typed. `herdr pane read <pane> --source visible --format ansi` shows it wrapped in `ESC[2m`.
 - **Agent reports:** Codex sessions report by typing `Status from <pane/ticket>: …` into your prompt with `herdr agent prompt`, so it arrives looking exactly like Kevin typing. A prompt starting `Status from …` is an agent's report, never Kevin's words, a decision, or an approval.
-- **New work goes to fresh sessions:** write a self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md`, then run `~/.claude/hooks/herdr-orchestrator next`. It reuses a `⚪ ready` Claude tab or opens a new one in `HERDR_WORK_DIR` (default: the current directory), and leaves the brief queued if free memory is under `FLEET_MIN_MB` (default 1500).
+- **New work goes to fresh sessions:** write a self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md`. If lanes are set up, route it first (see Lanes and leads). Then run `~/.claude/hooks/herdr-orchestrator next`. It reuses a `⚪ ready` Claude tab or opens a new one in `HERDR_WORK_DIR` (default: the current directory), and leaves the brief queued if free memory is under `FLEET_MIN_MB` (default 1500).
 - **Finished sessions:** leave their conversations open. Identify the tab label, pane, kind, and native session ID, then obtain Kevin's explicit approval before clearing or closing that target. Recheck identity immediately before acting. Idle/done, `⚪ ready`, and memory pressure are not approval; never clear or close a different occupant under an old approval.
 - **Kevin's decisions:** keep his open asks on your own tab with `herdr-tab ask`. Relay his answers to the sessions that own the work. Production, data, spend and exceptions to a gate stay his calls; never make them for him.
 - **Telling sessions apart:** `/rename <name>` and `/color <color>` change another session's name and prompt bar. Send them with `herdr agent prompt <pane> "/rename login-fix"`. Both take effect at once, even while the session is busy.
+
+### Lanes and leads
+
+Holding every lane's detail in one context fills the orchestrator up. So a busy lane gets its own lead, and the orchestrator keeps one line per lane.
+
+- **Lanes:** a fixed list in `~/.config/team-floor/lanes.json`, which the team floor reads too:
+  `{"lanes": [{"id": "api", "name": "API", "about": "Server endpoints, webhooks, database"}]}`. Ids are lowercase, up to 27 characters, and never `unclear` or `started`. Without the file there are no lanes, and everything works as before.
+- **Routing:** `herdr-orchestrator route <brief>` asks Jev which lane the brief belongs to, as a `choice` over the lane ids plus `unclear`. It sends at most the brief's last 1,500 characters, plus the lane names and descriptions. It prints the lane, the probability and the rule it applied:
+  - probability 0.60 or more: moves the brief to `~/.cache/herdr-fleet/queue/<lane>/`;
+  - 0.40 up to 0.60: moves it, and starts it with a "Lane to confirm" line;
+  - below 0.40, `unclear`, or Jev unavailable (no key, an error, a timeout): leaves the brief where it is, flags Kevin with `herdr-tab ask`, and exits 3. Pick the lane with Kevin and move the file yourself. Routing never waits on Jev.
+- **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged or 💤 parked. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It never starts a second lead, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back.
+- **Your view:** keep one line per lane. When Kevin asks about a led lane, ask its lead over Agent Wire (or SendMessage `lead-<lane>`) instead of reading its sessions yourself. `next` skips a lane that has a lead.
+- **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back. The lead runs `herdr-orchestrator handback <lane>`, which drops its `lead-<lane>` name, renames its tab `💤 ex-lead-<lane>` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
+- **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.)
+
+### If you are a lane lead
+
+- You coordinate one lane, the way the orchestrator coordinates the rest. Keep your tab named `🧭 lead-<lane>`.
+- Start each brief in your lane's queue with `~/.claude/hooks/herdr-orchestrator next --lane <lane>`. Its session reports to you instead of the orchestrator.
+- Send the orchestrator one line when something in the lane merges, gets blocked or needs Kevin. Answer its questions about the lane in detail.
+- When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy. Afterwards, leave your conversation open.
 
 ## Opening tabs and starting agents
 
