@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Keep the shared Claude or Codex orchestrator visible without replacing a live owner.
 
-    herdr-orchestrator who       print the orchestrator's tab and state; exit 1 if there is none
-    herdr-orchestrator claim     make the calling Claude session the orchestrator, taking the role over
-    herdr-orchestrator ensure    recover only a confirmed vacant 👑 tab; defer uncertain identity
-    herdr-orchestrator next      start the next queued brief in a ⚪ ready Claude tab, or a new tab
+    herdr-orchestrator who             print the orchestrator's tab and state; exit 1 if there is none
+    herdr-orchestrator claim           make the calling Claude session the orchestrator, taking the role over
+    herdr-orchestrator ensure          recover only a confirmed vacant 👑 tab; defer uncertain identity
+    herdr-orchestrator next [--lane L] start the next queued brief in a ⚪ ready Claude tab, or a new tab
+    herdr-orchestrator route <brief>   ask Jev which lane a queued brief belongs to, and move it there
+    herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
+    herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
 
 The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
 agents, so there can never be two. Claiming also names its tab "👑 orchestrator", renames its Claude
@@ -15,11 +18,22 @@ crowned shell, but a missing crown requires owner reconciliation rather than a n
 The orchestrator keeps no notes: it rebuilds its picture from ticket-graph checkpoints, Linear,
 GitHub and the tabs each time.
 
-`next` takes the first brief from QUEUE (<order>-<agent-name>.md, one self-contained brief each).
-It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
+`next` takes the first brief from QUEUE (<order>-<agent-name>.md, one self-contained brief each),
+then from the queue of any lane that has no lead. `next --lane L` takes only from QUEUE/L/, for
+that lane's lead. It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
 New sessions start in HERDR_WORK_DIR, or the current directory.
+
+Lanes come from LANES, a file the team floor reads too: {"lanes": [{"id", "name", "about"}]}.
+`route` asks Jev a choice question over the lane ids plus `unclear`, sending at most the
+brief's last 1,500 characters, and our rules decide: probability >= 0.60 routes; 0.40 to 0.60
+routes and marks the brief "lane to confirm"; anything else, `unclear`, or no Jev leaves the
+brief where it is and flags Kevin. It exits 0 when it routes and 3 when Kevin has to pick.
+A lane with at least LEAD_AT open briefs or sessions gets a lead: a fresh Claude session named
+lead-<lane> that runs that lane's queue. When the lane is down to HANDBACK_AT open items, the
+lead runs `handback`. Its conversation stays open.
 """
 
+import contextlib
 import fcntl
 import json
 import os
@@ -27,24 +41,52 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 
 NAME = "orchestrator"
 CROWN = "👑"
 LABEL = f"{CROWN} {NAME}"
 COLOR = "yellow"
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
-TAB = os.path.expanduser("~/.claude/hooks/herdr-tab")
+TAB = os.path.join(os.path.dirname(os.path.realpath(__file__)), "herdr-tab")  # installed side by side
 STATE = os.path.expanduser("~/.local/state/orchestrator")
 WORK_DIR = os.path.expanduser(os.environ.get("HERDR_WORK_DIR") or os.getcwd())
 QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herdr-fleet/queue")
 MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
 GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
+LANES = os.path.expanduser("~/.config/team-floor/lanes.json")
+LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so lead-<lane> is a valid Herdr agent name
+UNCLEAR = "unclear"
+RESERVED = {UNCLEAR, "started"}  # Jev's escape hatch, and the queue's own folder
+ROUTE_AT, CONFIRM_AT = 0.60, 0.40
+LEAD_AT, HANDBACK_AT = 4, 1  # open items that start a lead, and that hand the lane back
+LEAD = "🧭"
+FINISHED = ("🎉", "💤")  # stage emoji of a session whose work is merged or parked
+JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
+KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
+JEV_CHARS = 1500
 BRIEF = (
     "You are the orchestrator: the one Claude session in Herdr that keeps track of all the others "
     "for Kevin. The previous orchestrator stopped, so this session was started to replace it. Load the "
     "`herdr` skill and follow its Orchestrator section. Coordinate, and hand the work itself to "
     "fresh sessions. Rebuild the picture from each worktree's ticket-graph checkpoint, Linear, GitHub "
-    "and the tabs, then tell Kevin in a few lines what you picked up and what needs him."
+    "and the tabs, then tell Kevin in a few lines what you picked up and what needs him. If Agent Wire "
+    "is installed, start your task text with `role: main`."
+)
+LEAD_BRIEF = (
+    "You are {lead}, the lead for the {name} lane ({about}). The orchestrator handed you this lane "
+    "because it got busy, so its own context stays short. Load the `herdr` skill and follow its "
+    "Lane leads section. Keep your tab named `{label}`. Your queue is {queue}: start each brief in "
+    "a fresh session with `~/.claude/hooks/herdr-orchestrator next --lane {lane}`. Coordinate, and "
+    "hand the work itself to those sessions. If Agent Wire is installed, start your task text with "
+    "`role: lead lane: {lane}`. Send the orchestrator one line when something in the lane merges, "
+    "gets blocked or needs Kevin, and answer its questions about the lane in detail. When the lane "
+    "is down to {handback} open item, run `~/.claude/hooks/herdr-orchestrator handback {lane}`. "
+    "Leave this conversation open afterwards; never clear it."
+)
+LANE_NOTE = (
+    "\n\nThis brief is in the {lane} lane. While {lead} runs, send it your one-line updates "
+    "instead of the orchestrator."
 )
 
 
@@ -55,15 +97,20 @@ def herdr(*args, timeout=10):
     return json.loads(result.stdout or "{}").get("result", {})
 
 
-def live():
-    """The orchestrator's Herdr agent, or None."""
+def agent_named(name):
+    """The live Herdr agent with this name, or None."""
     try:
-        return herdr("agent", "get", NAME, timeout=5)["agent"]
+        return herdr("agent", "get", name, timeout=5)["agent"]
     except RuntimeError as error:
         # An unavailable server is not evidence that the assigned owner exited.
         if json.loads(str(error)).get("error", {}).get("code") == "agent_not_found":
             return None
         raise
+
+
+def live():
+    """The orchestrator's Herdr agent, or None."""
+    return agent_named(NAME)
 
 
 def who():
@@ -204,71 +251,327 @@ def ensure():
     return 0
 
 
-def next_brief():
-    """Start the next queued brief in a fresh Claude session, reusing a ⚪ ready tab first."""
-    os.makedirs(os.path.join(QUEUE, "started"), exist_ok=True)
+@contextlib.contextmanager
+def queue_lock():
+    os.makedirs(QUEUE, exist_ok=True)
     with open(os.path.join(QUEUE, ".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        briefs = sorted(f for f in os.listdir(QUEUE) if f.endswith(".md"))
-        if not briefs:
+        yield
+
+
+def briefs_in(folder):
+    try:
+        return sorted(f for f in os.listdir(folder) if f.endswith(".md"))
+    except FileNotFoundError:
+        return []
+
+
+def agent_name(brief):
+    return brief[: -len(".md")].split("-", 1)[-1]
+
+
+def start_session(name, label=None):
+    """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
+    # A cleared session is already running and fresh, so reusing one costs no memory.
+    ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
+    reuse = next(
+        (
+            p
+            for p in herdr("pane", "list")["panes"]
+            if p["tab_id"] in ready
+            and p.get("agent") == "claude"
+            and p.get("cwd") == WORK_DIR
+            and p.get("agent_status") in ("idle", "done")
+        ),
+        None,
+    )
+    if reuse:
+        herdr("agent", "rename", reuse["pane_id"], name)
+        type_into(name, f"/rename {name}")
+        if label:
+            herdr("tab", "rename", reuse["tab_id"], label)
+        return reuse["pane_id"]
+    avail = available_mb()
+    if avail < MIN_MB:
+        print(f"fleet: {avail} MB available, {MIN_MB} needed; {name} not started")
+        return None
+    workspace = os.environ["HERDR_WORKSPACE_ID"]
+    tab = herdr("tab", "create", "--workspace", workspace, "--label", label or name, "--cwd", WORK_DIR, "--no-focus")
+    pane = tab["root_pane"]["pane_id"]
+    herdr(
+        "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name, timeout=150
+    )
+    return pane
+
+
+def next_brief(*args):
+    """Start the next queued brief in a fresh Claude session."""
+    lane = args[1] if len(args) == 2 and args[0] == "--lane" else None
+    if args and not (lane and LANE_ID.fullmatch(lane)):
+        print("usage: herdr-orchestrator next [--lane <lane>]", file=sys.stderr)
+        return 2
+    with queue_lock():
+        if lane:
+            folders = [os.path.join(QUEUE, lane)]
+        else:  # the main queue, then lanes that have no lead to run them
+            folders = [QUEUE]
+            folders += [os.path.join(QUEUE, ln["id"]) for ln in load_lanes() if not agent_named(f"lead-{ln['id']}")]
+        queued = sorted((brief, folder) for folder in folders for brief in briefs_in(folder))
+        if not queued:
             print("fleet: queue empty")
             return 0
-        path = os.path.join(QUEUE, briefs[0])
-        name = briefs[0][: -len(".md")].split("-", 1)[-1]
+        brief, folder = queued[0]
+        name = agent_name(brief)
+        path = os.path.join(folder, brief)
         with open(path, encoding="utf-8") as handle:
-            brief = handle.read()
-        # A cleared session is already running and fresh, so reusing one costs no memory.
-        ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
-        pane = next(
-            (
-                p["pane_id"]
-                for p in herdr("pane", "list")["panes"]
-                if p["tab_id"] in ready
-                and p.get("agent") == "claude"
-                and p.get("cwd") == WORK_DIR
-                and p.get("agent_status") in ("idle", "done")
-            ),
-            None,
-        )
-        if pane:
-            herdr("agent", "rename", pane, name)
-            type_into(name, f"/rename {name}")
+            text = handle.read()
+        if lane:
+            text += LANE_NOTE.format(lane=lane, lead=f"lead-{lane}")
+        pane = start_session(name)
+        if not pane:
+            return 3
+        herdr("agent", "prompt", name, text)
+        os.makedirs(os.path.join(folder, "started"), exist_ok=True)
+        os.rename(path, os.path.join(folder, "started", brief))
+        print(f"fleet: started {name} in pane {pane}")
+    return 0
+
+
+def load_lanes():
+    """The lanes in LANES, as [{"id", "name", "about"}]; none if the file is missing."""
+    try:
+        with open(LANES, encoding="utf-8") as handle:
+            lanes = json.load(handle).get("lanes") or []
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, AttributeError) as error:
+        sys.exit(f"lanes: can't read {LANES}: {error}")
+    valid = []
+    for lane in lanes:
+        lane_id = lane.get("id") if isinstance(lane, dict) else None
+        if isinstance(lane_id, str) and LANE_ID.fullmatch(lane_id) and lane_id not in RESERVED:
+            valid.append(lane)
         else:
-            avail = available_mb()
-            if avail < MIN_MB:
-                print(f"fleet: {avail} MB available, {MIN_MB} needed; {name} stays queued")
-                return 3
-            workspace = os.environ["HERDR_WORKSPACE_ID"]
-            tab = herdr(
-                "tab",
-                "create",
-                "--workspace",
-                workspace,
-                "--label",
-                name,
-                "--cwd",
-                WORK_DIR,
-                "--no-focus",
-            )
-            pane = tab["root_pane"]["pane_id"]
+            print(f"lanes: skipping {lane!r}: ids are lowercase, up to 27 characters, not {RESERVED}", file=sys.stderr)
+    return valid
+
+
+class JevUnavailable(Exception):
+    pass
+
+
+def typesafe_key():
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if not key and os.path.exists(KEY_FILE):
+        with open(KEY_FILE, encoding="utf-8") as handle:
+            key = handle.read().strip()
+    return key
+
+
+def ask_jev(brief, lanes):
+    """Jev's pick among the lane ids and `unclear`, with its probability. Raises JevUnavailable."""
+    key = typesafe_key()
+    if not key:
+        raise JevUnavailable("no TypeSafe key")
+    criteria = {
+        lane["id"]: " - ".join(filter(None, (lane.get("name"), lane.get("about")))) or lane["id"] for lane in lanes
+    }
+    criteria[UNCLEAR] = "The brief fits none of these lanes, or several equally"
+    body = {
+        "state": brief[-JEV_CHARS:],
+        "model": "jev-latest",
+        "questions": {
+            "lane": {
+                "type": "choice",
+                "instructions": "Which lane of work does this brief belong to?",
+                "criteria": criteria,
+            }
+        },
+    }
+    request = urllib.request.Request(
+        JEV_URL,
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=4) as response:
+            answer = json.load(response)["answers"]["lane"]
+        choice = answer["choice"]
+        # The probability of the pick itself; confidence only if a reply leaves that out.
+        probability = float((answer.get("probabilities") or {}).get(choice, answer.get("confidence")))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise JevUnavailable(f"{type(error).__name__}: {error}") from None
+    if choice not in criteria:
+        raise JevUnavailable(f"picked {choice!r}, which isn't a lane")
+    return choice, probability
+
+
+def decide(choice, probability):
+    """Our rule for Jev's answer: ("route" | "confirm" | "ask", why)."""
+    if choice == UNCLEAR:
+        return "ask", "Jev said unclear"
+    if probability >= ROUTE_AT:
+        return "route", f">= {ROUTE_AT:.2f}"
+    if probability >= CONFIRM_AT:
+        return "confirm", f"{CONFIRM_AT:.2f} to {ROUTE_AT:.2f}, marked lane to confirm"
+    return "ask", f"below {CONFIRM_AT:.2f}; Jev leaned {choice}"
+
+
+def route(path=None):
+    if not path:
+        print("usage: herdr-orchestrator route <brief>", file=sys.stderr)
+        return 2
+    if not os.path.isfile(path):
+        path = os.path.join(QUEUE, path)
+    if not os.path.isfile(path):
+        print(f"route: no brief at {path}", file=sys.stderr)
+        return 2
+    lanes = load_lanes()
+    if not lanes:
+        print(f"route: no lanes in {LANES}", file=sys.stderr)
+        return 2
+    with open(path, encoding="utf-8") as handle:
+        brief = handle.read()
+    try:
+        choice, probability = ask_jev(brief, lanes)
+        rule, why = decide(choice, probability)
+    except JevUnavailable as error:  # never block on Jev: Kevin picks instead
+        choice, probability, rule, why = None, None, "ask", f"Jev unavailable: {error}"
+    shown = "-" if probability is None else f"{probability:.2f}"
+    name = os.path.basename(path)
+    if rule == "ask":
+        print(f"lane: none, probability: {shown}, rule: ask Kevin ({why})")
+        subprocess.run([TAB, "ask", f"which lane for {name[: -len('.md')]}?"], check=False)
+        print(f"left {path} unrouted")
+        return 3
+    print(f"lane: {choice}, probability: {shown}, rule: {rule} ({why})")
+    lane = next(lane for lane in lanes if lane["id"] == choice)
+    if rule == "confirm":
+        brief = (
+            f"Lane to confirm: Jev put this brief in the {lane.get('name') or choice} lane with probability "
+            f"{shown}. Check that it belongs there before you start it.\n\n" + brief
+        )
+    with queue_lock():
+        folder = os.path.join(QUEUE, choice)
+        os.makedirs(folder, exist_ok=True)
+        target = os.path.join(folder, name)
+        if os.path.exists(target):
+            print(f"route: {target} already exists; left {path} where it is", file=sys.stderr)
+            return 1
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(brief)
+        os.remove(path)
+        print(f"moved to {target}")
+        print(check_lane(lane))
+    return 0
+
+
+def lane_items(lane_id):
+    """A lane's open work: its queued briefs, and the started ones whose session is still open."""
+    folder = os.path.join(QUEUE, lane_id)
+    queued = [agent_name(brief) for brief in briefs_in(folder)]
+    sessions, labels = [], None
+    for brief in briefs_in(os.path.join(folder, "started")):
+        agent = agent_named(agent_name(brief))
+        if not agent:
+            continue
+        if labels is None:
+            labels = {t["tab_id"]: t.get("label") or "" for t in herdr("tab", "list")["tabs"]}
+        if not any(mark in labels.get(agent.get("tab_id"), "") for mark in FINISHED):
+            sessions.append(agent_name(brief))
+    return queued, sessions
+
+
+def lost_lead(lead):
+    """A tab that still reads as the lead's and runs an agent, though no agent has the lead's name."""
+    label = f"{LEAD} {lead}"
+    tabs = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if (t.get("label") or "").endswith(label)}
+    return next((p["tab_id"] for p in herdr("pane", "list")["panes"] if p["tab_id"] in tabs and p.get("agent")), None)
+
+
+def check_lane(lane):
+    """Start a lead for a busy lane, or ask a quiet lane's lead to hand it back. One line about the lane."""
+    lane_id, lead = lane["id"], f"lead-{lane['id']}"
+    queued, sessions = lane_items(lane_id)
+    count = len(queued) + len(sessions)
+    line = f"{lane_id}: {len(queued)} queued, {len(sessions)} open"
+    asked = os.path.join(QUEUE, lane_id, ".handback-asked")
+    agent = agent_named(lead)
+    if agent:
+        if count <= HANDBACK_AT and not os.path.exists(asked):
             herdr(
                 "agent",
-                "start",
-                name,
-                "--kind",
-                "claude",
-                "--pane",
-                pane,
-                "--timeout",
-                "120000",
-                "--",
-                "-n",
-                name,
-                timeout=150,
+                "prompt",
+                lead,
+                f"Status from orchestrator: lane {lane_id} is down to {count} open item. Between steps, "
+                f"run `~/.claude/hooks/herdr-orchestrator handback {lane_id}`.",
             )
-        herdr("agent", "prompt", name, brief)
-        os.rename(path, os.path.join(QUEUE, "started", briefs[0]))
-        print(f"fleet: started {name} in pane {pane}")
+            open(asked, "w").close()
+            return f"{line}; asked {lead} to hand it back"
+        return f"{line}; {lead} in tab {agent['tab_id']}"
+    if count < LEAD_AT:
+        return f"{line}; no lead"
+    stray = lost_lead(lead)
+    if stray:
+        return f"{line}; tab {stray} reads {LEAD} {lead} but lost the name, so no second lead starts"
+    label = f"{LEAD} {lead}"
+    pane = start_session(lead, label)
+    if not pane:
+        return f"{line}; {lead} waits for memory"
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(asked)
+    queue = os.path.join(QUEUE, lane_id)
+    about = lane.get("about") or lane.get("name") or lane_id
+    brief = LEAD_BRIEF.format(
+        lead=lead,
+        name=lane.get("name") or lane_id,
+        about=about,
+        label=label,
+        queue=queue,
+        lane=lane_id,
+        handback=HANDBACK_AT,
+    )
+    herdr("agent", "prompt", lead, brief)
+    return f"{line}; started {lead} in pane {pane}"
+
+
+def leads():
+    lanes = load_lanes()
+    if not lanes:
+        print(f"no lanes in {LANES}")
+        return 0
+    with queue_lock():
+        for lane in lanes:
+            print(check_lane(lane))
+    return 0
+
+
+def handback(lane_id=None):
+    me = os.environ.get("HERDR_PANE_ID")
+    if not lane_id or not LANE_ID.fullmatch(lane_id):
+        print("usage: herdr-orchestrator handback <lane>", file=sys.stderr)
+        return 2
+    lead = f"lead-{lane_id}"
+    agent = agent_named(lead)
+    if not agent or agent["pane_id"] != me:
+        print(f"only {lead} hands lane {lane_id} back, from its own pane", file=sys.stderr)
+        return 2
+    with queue_lock():
+        queued, sessions = lane_items(lane_id)
+        if len(queued) + len(sessions) > HANDBACK_AT:
+            print(f"lane {lane_id} still has {len(queued)} queued and {len(sessions)} open; keep leading it")
+            return 1
+        herdr("agent", "rename", me, "--clear")
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
+    subprocess.run([TAB, "name", f"💤 ex-{lead}"], check=False)  # keeps the status and any ask
+    type_into(me, f"/rename ex-{lead}")
+    left = ", ".join(queued + sessions) or "nothing"
+    if live():
+        herdr("agent", "prompt", NAME, f"Status from {lead}: handed lane {lane_id} back to you; open: {left}.")
+    else:
+        print(f"no orchestrator to tell; open in {lane_id}: {left}", file=sys.stderr)
+    print(f"handed lane {lane_id} back; this conversation stays open")
     return 0
 
 
@@ -276,12 +579,20 @@ def main():
     if os.environ.get("HERDR_ENV") != "1":
         print("not running inside Herdr", file=sys.stderr)
         return 2
-    command = sys.argv[1] if len(sys.argv) > 1 else "who"
-    commands = {"who": who, "claim": claim, "ensure": ensure, "next": next_brief}
-    if command not in commands:
+    command, args = sys.argv[1] if len(sys.argv) > 1 else "who", sys.argv[2:]
+    commands = {  # each with the most arguments it takes
+        "who": (who, 0),
+        "claim": (claim, 0),
+        "ensure": (ensure, 0),
+        "next": (next_brief, 2),
+        "route": (route, 1),
+        "leads": (leads, 0),
+        "handback": (handback, 1),
+    }
+    if command not in commands or len(args) > commands[command][1]:
         print(__doc__.strip())
         return 2
-    return commands[command]()
+    return commands[command][0](*args)
 
 
 if __name__ == "__main__":

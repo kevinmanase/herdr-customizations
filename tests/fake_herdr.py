@@ -46,9 +46,21 @@ match args:
     case ["agent", "get", name]:
         agent = state.get("agents", {}).get(name)
         done({"agent": agent}) if agent else done(error="agent_not_found")
-    case ["agent", "rename", pane_id, name]:
-        state.setdefault("agents", {})[name] = {**pane(pane_id), "name": name}
+    case ["agent", "rename", pane_id, "--clear"]:
+        state["agents"] = {n: a for n, a in state.get("agents", {}).items() if a["pane_id"] != pane_id}
         done({})
+    case ["agent", "rename", pane_id, name]:
+        held = state.setdefault("agents", {}).get(name)
+        if held and held["pane_id"] != pane_id:
+            done(error="agent_name_taken")
+        state["agents"] = {n: a for n, a in state["agents"].items() if a["pane_id"] != pane_id}
+        state["agents"][name] = {**pane(pane_id), "name": name}
+        done({})
+    case ["agent", "start", name, *rest]:
+        pane_id = rest[rest.index("--pane") + 1]
+        pane(pane_id)["agent"] = "claude"
+        state.setdefault("agents", {})[name] = {**pane(pane_id), "name": name}
+        done({"agent": state["agents"][name]})
     case ["agent" | "notification", *_]:
         done({})
     case _:

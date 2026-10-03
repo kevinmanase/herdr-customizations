@@ -1,0 +1,12 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "lane": {
+      "type": "choice",
+      "choice": "api",
+      "confidence": 0.78,
+      "probabilities": {"api": 0.85, "mobile": 0.1, "unclear": 0.05}
+    }
+  },
+  "usage": {"input_tokens": 296, "output_tokens": 20}
+}
