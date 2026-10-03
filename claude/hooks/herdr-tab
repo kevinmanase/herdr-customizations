@@ -23,6 +23,7 @@ shows. Only that message's last 1,500 characters are sent.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -35,7 +36,9 @@ SEPARATOR = " · "
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 ORCHESTRATOR = os.path.expanduser("~/.claude/hooks/herdr-orchestrator")
 ORCHESTRATOR_LABEL = "👑 orchestrator"
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
+# A lane lead's tab: herdr-orchestrator's LEAD mark and LANE_ID rule (a test keeps them in step).
+LEAD_LABEL = re.compile(r"🧭 (lead-[a-z][a-z0-9_-]{0,26})")
+JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
 KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
 
 FLAG_HOW = (
@@ -103,28 +106,62 @@ def read(tab):
     return parse(herdr("tab", "get", tab)["tab"].get("label") or "")
 
 
-def orchestrator():
-    """The orchestrator's Herdr agent (see herdr-orchestrator), or None."""
+def agent_named(name):
     try:
-        return herdr("agent", "get", "orchestrator")["agent"]
+        return herdr("agent", "get", name)["agent"]
     except Exception:
         return None
 
 
-def reclaim_crown():
-    """If this pane's tab still wears the crown, take the orchestrator's name back: the agent, or None."""
+def orchestrator():
+    """The orchestrator's Herdr agent (see herdr-orchestrator), or None."""
+    return agent_named("orchestrator")
+
+
+def take_name(name):
+    """Give this pane the Herdr name `name`: the agent, or None."""
+    # Herdr sees a new process as an agent about half a second after it starts; the retries cover a slow box.
+    for _ in range(6):
+        try:
+            herdr("agent", "rename", os.environ["HERDR_PANE_ID"], name)
+            return agent_named(name)
+        except RuntimeError:
+            time.sleep(0.5)
+    return None
+
+
+def reclaim_crown(name):
+    """If this pane's tab (named `name`) wears the crown, take the orchestrator's name back: the agent, or None."""
     # A restart clears a pane's Herdr name but not its tab's label, so a crowned tab without the name is
-    # the orchestrator coming back. (Its SessionStart used to run `ensure`, which started a spare.) Herdr
-    # sees a new process as an agent about half a second after it starts; the retries cover a slow box.
+    # the orchestrator coming back. (Its SessionStart used to run `ensure`, which started a spare.)
     try:
-        if read(current_tab())[2] != ORCHESTRATOR_LABEL:
+        if name == ORCHESTRATOR_LABEL:
+            return take_name("orchestrator")
+    except Exception:
+        pass
+    return None
+
+
+def unnamed(name):
+    """Whether Herdr says no agent has this name. A Herdr error is not an answer, so it counts as named."""
+    try:
+        herdr("agent", "get", name)
+        return False
+    except RuntimeError as error:
+        return "agent_not_found" in str(error)
+
+
+def reclaim_lead(name):
+    """If this pane's tab (named `name`) is a lane lead's and no agent has that name, take it: the name, or None."""
+    try:
+        match = LEAD_LABEL.fullmatch(name)
+        if not match or not unnamed(match[1]):
             return None
-        for _ in range(6):
-            try:
-                herdr("agent", "rename", os.environ["HERDR_PANE_ID"], "orchestrator")
-                return orchestrator()
-            except RuntimeError:
-                time.sleep(0.5)
+        # `herdr agent start lead-<lane>` names a new lead about half a second after it starts, which can be
+        # after this hook runs. Give it that long before taking a name nobody else has.
+        time.sleep(1)
+        if unnamed(match[1]) and take_name(match[1]):
+            return match[1]
     except Exception:
         pass
     return None
@@ -345,14 +382,26 @@ def hook(event):
     if event == "remind":  # synchronous: its output joins the turn's context
         print(TURN_REMINDER)
     elif event == "session":
+        tab = current_tab()
+        try:
+            status, _, name = read(tab)
+        except Exception:
+            status, name = None, ""
         agent = orchestrator()
-        reclaimed = not agent and reclaim_crown()
+        reclaimed = not agent and reclaim_crown(name)
         agent = reclaimed or agent
+        mine = bool(agent) and agent["pane_id"] == os.environ.get("HERDR_PANE_ID")
         context = SESSION_REMINDER + " " + orchestrator_context(agent)
         if reclaimed:
             context += (
                 " A restart cleared this pane's Herdr name. This tab still wears the crown, so the hook "
                 "gave the name back: you are still the orchestrator."
+            )
+        lead = not mine and payload.get("source") != "clear" and reclaim_lead(name)
+        if lead:
+            context += (
+                f" This tab reads as {lead}'s and its pane had no Herdr name, so the hook gave it that name: "
+                f"you are {lead}, a lane lead. Follow the `herdr` skill's Lane leads section."
             )
         print(
             json.dumps(
@@ -364,10 +413,7 @@ def hook(event):
                 }
             )
         )
-        tab = current_tab()
-        status, _, name = read(tab)
         if payload.get("source") == "clear":  # the old task's name went with its context; the role didn't
-            mine = agent and agent["pane_id"] == os.environ.get("HERDR_PANE_ID")
             if not mine:
                 forget_name()
             render(tab, READY, "", ORCHESTRATOR_LABEL if mine else "")

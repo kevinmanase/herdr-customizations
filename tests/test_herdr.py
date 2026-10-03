@@ -1,68 +1,11 @@
 import json
 import runpy
-import subprocess
-import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 TAB = ROOT / "claude/hooks/herdr-tab"
 ORCHESTRATOR = ROOT / "claude/hooks/herdr-orchestrator"
 CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
-FAKE = Path(__file__).resolve().parent / "fake_herdr.py"
-
-
-@pytest.fixture
-def herdr(tmp_path):
-    """A fake Herdr with one Claude pane, p1 in tab t1, and a separate orchestrator in t9."""
-    state = tmp_path / "state.json"
-    state.write_text(
-        json.dumps(
-            {
-                "tabs": {"t1": "⏳ ready", "t9": "✅ 👑 orchestrator"},
-                "panes": [
-                    {"pane_id": "p1", "tab_id": "t1", "agent": "claude"},
-                    {"pane_id": "p9", "tab_id": "t9", "agent": "claude"},
-                ],
-                "agents": {"orchestrator": {"pane_id": "p9", "tab_id": "t9"}},
-            }
-        )
-    )
-    env = {
-        "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
-        "HOME": str(tmp_path),
-        "HERDR_ENV": "1",
-        "HERDR_PANE_ID": "p1",
-        "HERDR_WORKSPACE_ID": "w1",
-        "HERDR_BIN_PATH": str(FAKE),
-        "FAKE_HERDR_STATE": str(state),
-        "HERDR_FLEET_QUEUE": str(tmp_path / "queue"),
-        "HERDR_WORK_DIR": str(tmp_path),
-    }
-
-    class Herdr:
-        def run(self, script, *args, stdin="", **extra):
-            return subprocess.run(
-                [sys.executable, str(script), *args],
-                input=stdin,
-                capture_output=True,
-                text=True,
-                env={**env, **extra},
-                timeout=30,
-            )
-
-        @property
-        def state(self):
-            return json.loads(state.read_text())
-
-        def label(self, tab="t1"):
-            return self.state["tabs"][tab]
-
-        def set_state(self, **changes):
-            state.write_text(json.dumps({**self.state, **changes}))
-
-    return Herdr()
 
 
 def test_session_hook_tells_the_agent_to_name_its_tab(herdr):

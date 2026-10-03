@@ -67,3 +67,18 @@ to your own tab and to raw `herdr agent prompt <pane> "/clear"` commands too.
 Do not confuse dim Claude prompt suggestions with user input. If needed,
 `herdr pane read <pane> --source visible --format ansi` reveals `ESC[2m` styling.
 Inspect actual agent kind before sending product-specific slash commands.
+
+## Lanes and leads
+
+If `~/.config/team-floor/lanes.json` lists lanes, a busy lane gets a Claude
+lead named `lead-<lane>` (tab `🧭 lead-<lane>`) that runs
+`~/.cache/herdr-fleet/queue/<lane>/`. The orchestrator keeps one line per lane
+and asks a lead for detail instead of reading its sessions. Route a new brief
+with `~/.claude/hooks/herdr-orchestrator route <brief>`: Jev picks the lane, and
+a weak pick, `unclear`, or no Jev leaves the brief unrouted and flags Kevin.
+`herdr-orchestrator leads` prints one line per lane and starts a lead for a lane
+with 4 or more open items. A lead hands a lane with 1 open item back with
+`herdr-orchestrator handback <lane>`, and its conversation stays open. With
+Agent Wire, start the task text with `role: main` as the orchestrator, or
+`role: lead lane: <id>` as a lead. The Claude skill's "Lanes and leads"
+section has the full rules.
