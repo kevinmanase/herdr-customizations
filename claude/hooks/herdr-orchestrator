@@ -18,8 +18,8 @@ crowned shell, but a missing crown requires owner reconciliation rather than a n
 The orchestrator keeps no notes: it rebuilds its picture from ticket-graph checkpoints, Linear,
 GitHub and the tabs each time.
 
-`next` takes the first brief from QUEUE (<order>-<agent-name>.md, one self-contained brief each),
-then from the queue of any lane that has no lead. `next --lane L` takes only from QUEUE/L/, for
+`next` takes the first brief by name (<order>-<agent-name>.md, one self-contained brief each) from
+QUEUE and from the queue of any lane that has no lead. `next --lane L` takes only from QUEUE/L/, for
 that lane's lead. It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
 New sessions start in HERDR_WORK_DIR, or the current directory.
 

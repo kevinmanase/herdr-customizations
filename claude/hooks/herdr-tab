@@ -376,8 +376,8 @@ def hook(event):
                 " A restart cleared this pane's Herdr name. This tab still wears the crown, so the hook "
                 "gave the name back: you are still the orchestrator."
             )
-        lead = not agent or agent["pane_id"] != os.environ.get("HERDR_PANE_ID")
-        lead = lead and reclaim_lead()
+        mine = agent and agent["pane_id"] == os.environ.get("HERDR_PANE_ID")
+        lead = not mine and payload.get("source") != "clear" and reclaim_lead()
         if lead:
             context += (
                 f" A restart cleared this pane's Herdr name. This tab reads as {lead}'s, so the hook gave the "
