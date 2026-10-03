@@ -272,13 +272,28 @@ def clear_when_done(approved_pane=None, approved_session=None):
     print("Scheduled /clear when this turn settles (30-second limit).")
 
 
+def typesafe_key():
+    """TYPESAFE_API_KEY, then `jev.api_key` in the team-floor config.json, then the older key file."""
+    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        config = json.loads((Path.home() / ".config/team-floor/config.json").read_text())
+        key = config["jev"]["api_key"].strip()
+        if key:
+            return key
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    key_file = Path.home() / ".config/typesafe/api-key"
+    if key_file.exists():
+        return key_file.read_text().strip() or None
+    return None
+
+
 def jev_says_waiting(text):
     if os.environ.get("HERDR_JEV_ENABLED") == "0" or not text.strip():
         return False
-    key = os.environ.get("TYPESAFE_API_KEY")
-    key_file = Path.home() / ".config/typesafe/api-key"
-    if not key and key_file.exists():
-        key = key_file.read_text().strip()
+    key = typesafe_key()
     if not key:
         return False
     request = urllib.request.Request(

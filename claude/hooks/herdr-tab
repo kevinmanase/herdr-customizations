@@ -16,9 +16,10 @@ already marks Claude's dialogs blocked; a reported state doesn't override it on 
 pane, so this doesn't try.) Outside Herdr it does nothing. It never fails a hook: every error
 exits 0.
 
-Optional: with TYPESAFE_API_KEY set, or a key in ~/.config/typesafe/api-key, the Stop hook asks
-Jev whether the turn's last message waits on Kevin, so an ask the agent forgot to flag still
-shows. Only that message's last 1,500 characters are sent.
+Optional: with a TypeSafe key (TYPESAFE_API_KEY, jev.api_key in ~/.config/team-floor/config.json,
+or ~/.config/typesafe/api-key), the Stop hook asks Jev whether the turn's last message waits on
+Kevin, so an ask the agent forgot to flag still shows. Only that message's last 1,500 characters
+are sent.
 """
 
 import json
@@ -40,6 +41,7 @@ ORCHESTRATOR_LABEL = "👑 orchestrator"
 LEAD_LABEL = re.compile(r"🧭 (lead-[a-z][a-z0-9_-]{0,26})")
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
 KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
+CONFIG = os.path.expanduser("~/.config/team-floor/config.json")
 
 FLAG_HOW = (
     '`~/.claude/hooks/herdr-tab ask "<question>"` for a question or decision, or '
@@ -335,11 +337,26 @@ def last_assistant_text(payload):
     return ""
 
 
-def jev_says_waiting(text):
-    key = os.environ.get("TYPESAFE_API_KEY")
-    if not key and os.path.exists(KEY_FILE):
+def typesafe_key():
+    """TYPESAFE_API_KEY, then `jev.api_key` in the team-floor config.json, then the older key file."""
+    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        with open(CONFIG, encoding="utf-8") as handle:
+            key = json.load(handle)["jev"]["api_key"].strip()
+        if key:
+            return key
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    if os.path.exists(KEY_FILE):
         with open(KEY_FILE, encoding="utf-8") as handle:
-            key = handle.read().strip()
+            return handle.read().strip() or None
+    return None
+
+
+def jev_says_waiting(text):
+    key = typesafe_key()
     if not key or not text.strip():
         return False
     body = {

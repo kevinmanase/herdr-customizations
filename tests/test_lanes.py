@@ -114,6 +114,37 @@ def test_routing_without_a_key_sends_nothing_and_asks_kevin(herdr, jev, lanes, q
     assert herdr.label().startswith("❓")
 
 
+def write_config(tmp_path, data):
+    path = tmp_path / ".config/team-floor/config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+
+
+def test_routing_reads_the_key_from_the_team_floor_config(herdr, jev, lanes, queue, tmp_path):
+    write_config(tmp_path, {"jev": {"api_key": " cfg-key "}})
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    result = herdr.run(ORCHESTRATOR, "route", str(brief), TYPESAFE_API_URL=jev.url)
+    assert result.returncode == 0, result.stderr
+    assert jev.headers[0]["Authorization"] == "Bearer cfg-key"
+
+
+def test_the_environment_key_wins_over_the_config(herdr, jev, lanes, queue, tmp_path):
+    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    route(herdr, jev, brief, key="env-key")
+    assert jev.headers[0]["Authorization"] == "Bearer env-key"
+
+
+def test_the_stop_hook_reads_the_key_from_the_team_floor_config(herdr, jev, tmp_path):
+    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
+    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
+    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_URL=jev.url)
+    assert jev.headers[0]["Authorization"] == "Bearer cfg-key"
+
+
 @pytest.mark.parametrize("reply", [529, {"answers": {}}])
 def test_a_jev_error_never_blocks_routing(herdr, jev, lanes, queue, reply):
     jev.reply = reply
