@@ -40,8 +40,6 @@ ORCHESTRATOR_LABEL = "👑 orchestrator"
 # A lane lead's tab: herdr-orchestrator's LEAD mark and LANE_ID rule (a test keeps them in step).
 LEAD_LABEL = re.compile(r"🧭 (lead-[a-z][a-z0-9_-]{0,26})")
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
-KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
-CONFIG = os.path.expanduser("~/.config/team-floor/config.json")
 
 FLAG_HOW = (
     '`~/.claude/hooks/herdr-tab ask "<question>"` for a question or decision, or '
@@ -338,26 +336,37 @@ def last_assistant_text(payload):
 
 
 def typesafe_key():
-    """TYPESAFE_API_KEY, then `jev.api_key` in the team-floor config.json, then the older key file."""
+    """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then jev.api_key_file
+    (default ~/.config/typesafe/api-key). Keep this identical in herdr-orchestrator, herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py checks all three."""
     key = os.environ.get("TYPESAFE_API_KEY", "").strip()
     if key:
         return key
     try:
-        with open(CONFIG, encoding="utf-8") as handle:
-            key = json.load(handle)["jev"]["api_key"].strip()
-        if key:
-            return key
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        pass
-    if os.path.exists(KEY_FILE):
-        with open(KEY_FILE, encoding="utf-8") as handle:
-            return handle.read().strip() or None
-    return None
+        with open(os.path.expanduser("~/.config/team-floor/config.json"), encoding="utf-8") as handle:
+            jev = json.load(handle)["jev"]
+    except (OSError, ValueError, KeyError, TypeError):
+        jev = {}
+    if not isinstance(jev, dict):
+        jev = {}
+    key = jev.get("api_key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    key_file = jev.get("api_key_file")
+    if not isinstance(key_file, str) or not key_file:
+        key_file = "~/.config/typesafe/api-key"
+    try:
+        with open(os.path.expanduser(key_file), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
 
 
 def jev_says_waiting(text):
+    if not text.strip():
+        return False
     key = typesafe_key()
-    if not key or not text.strip():
+    if not key:
         return False
     body = {
         "state": text[-1500:],

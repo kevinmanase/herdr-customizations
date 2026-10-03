@@ -273,21 +273,30 @@ def clear_when_done(approved_pane=None, approved_session=None):
 
 
 def typesafe_key():
-    """TYPESAFE_API_KEY, then `jev.api_key` in the team-floor config.json, then the older key file."""
+    """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then jev.api_key_file
+    (default ~/.config/typesafe/api-key). Keep this identical in herdr-orchestrator, herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py checks all three."""
     key = os.environ.get("TYPESAFE_API_KEY", "").strip()
     if key:
         return key
     try:
-        config = json.loads((Path.home() / ".config/team-floor/config.json").read_text())
-        key = config["jev"]["api_key"].strip()
-        if key:
-            return key
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        pass
-    key_file = Path.home() / ".config/typesafe/api-key"
-    if key_file.exists():
-        return key_file.read_text().strip() or None
-    return None
+        with open(os.path.expanduser("~/.config/team-floor/config.json"), encoding="utf-8") as handle:
+            jev = json.load(handle)["jev"]
+    except (OSError, ValueError, KeyError, TypeError):
+        jev = {}
+    if not isinstance(jev, dict):
+        jev = {}
+    key = jev.get("api_key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    key_file = jev.get("api_key_file")
+    if not isinstance(key_file, str) or not key_file:
+        key_file = "~/.config/typesafe/api-key"
+    try:
+        with open(os.path.expanduser(key_file), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
 
 
 def jev_says_waiting(text):

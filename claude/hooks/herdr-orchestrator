@@ -55,7 +55,6 @@ QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herd
 MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
 GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
 LANES = os.path.expanduser("~/.config/team-floor/lanes.json")
-CONFIG = os.path.expanduser("~/.config/team-floor/config.json")
 LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so lead-<lane> is a valid Herdr agent name
 UNCLEAR = "unclear"
 RESERVED = {UNCLEAR, "started"}  # Jev's escape hatch, and the queue's own folder
@@ -64,7 +63,6 @@ LEAD_AT, HANDBACK_AT = 4, 1  # open items that start a lead, and that hand the l
 LEAD = "🧭"
 FINISHED = ("🎉", "💤")  # stage emoji of a session whose work is merged or parked
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
-KEY_FILE = os.path.expanduser("~/.config/typesafe/api-key")
 JEV_CHARS = 1500
 BRIEF = (
     "You are the orchestrator: the one Claude session in Herdr that keeps track of all the others "
@@ -380,21 +378,30 @@ class JevUnavailable(Exception):
 
 
 def typesafe_key():
-    """TYPESAFE_API_KEY, then `jev.api_key` in the team-floor config.json, then the older key file."""
+    """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then jev.api_key_file
+    (default ~/.config/typesafe/api-key). Keep this identical in herdr-orchestrator, herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py checks all three."""
     key = os.environ.get("TYPESAFE_API_KEY", "").strip()
     if key:
         return key
     try:
-        with open(CONFIG, encoding="utf-8") as handle:
-            key = json.load(handle)["jev"]["api_key"].strip()
-        if key:
-            return key
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        pass
-    if os.path.exists(KEY_FILE):
-        with open(KEY_FILE, encoding="utf-8") as handle:
-            return handle.read().strip() or None
-    return None
+        with open(os.path.expanduser("~/.config/team-floor/config.json"), encoding="utf-8") as handle:
+            jev = json.load(handle)["jev"]
+    except (OSError, ValueError, KeyError, TypeError):
+        jev = {}
+    if not isinstance(jev, dict):
+        jev = {}
+    key = jev.get("api_key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    key_file = jev.get("api_key_file")
+    if not isinstance(key_file, str) or not key_file:
+        key_file = "~/.config/typesafe/api-key"
+    try:
+        with open(os.path.expanduser(key_file), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
 
 
 def ask_jev(brief, lanes):

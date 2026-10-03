@@ -120,21 +120,14 @@ def write_config(tmp_path, data):
     path.write_text(json.dumps(data))
 
 
-def test_routing_reads_the_key_from_the_team_floor_config(herdr, jev, lanes, queue, tmp_path):
+@pytest.mark.parametrize("env_key, sent", [("", "cfg-key"), ("env-key", "env-key")])
+def test_routing_takes_the_key_from_the_environment_then_the_config(herdr, jev, lanes, queue, tmp_path, env_key, sent):
     write_config(tmp_path, {"jev": {"api_key": " cfg-key "}})
     brief = queue / "01-webhook-fix.md"
     brief.write_text("Fix the Stripe webhook retries.")
-    result = herdr.run(ORCHESTRATOR, "route", str(brief), TYPESAFE_API_URL=jev.url)
+    result = route(herdr, jev, brief, key=env_key)
     assert result.returncode == 0, result.stderr
-    assert jev.headers[0]["Authorization"] == "Bearer cfg-key"
-
-
-def test_the_environment_key_wins_over_the_config(herdr, jev, lanes, queue, tmp_path):
-    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
-    brief = queue / "01-webhook-fix.md"
-    brief.write_text("Fix the Stripe webhook retries.")
-    route(herdr, jev, brief, key="env-key")
-    assert jev.headers[0]["Authorization"] == "Bearer env-key"
+    assert jev.headers[0]["Authorization"] == f"Bearer {sent}"
 
 
 def test_the_stop_hook_reads_the_key_from_the_team_floor_config(herdr, jev, tmp_path):
@@ -449,6 +442,31 @@ def test_the_stop_hook_uses_the_same_jev_endpoint(herdr, jev):
     herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
     assert jev.requests[0]["state"] == "Should I merge it now?"
     assert herdr.label().startswith("❓")
+
+
+CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
+
+
+@pytest.mark.parametrize("script", [ORCHESTRATOR, TAB, CODEX_TAB], ids=["orchestrator", "herdr-tab", "codex-herdr-tab"])
+def test_every_copy_finds_the_typesafe_key_the_same_way(script, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+    def key():
+        return runpy.run_path(str(script))["typesafe_key"]()
+
+    assert not key()
+    default_file = tmp_path / ".config/typesafe/api-key"
+    default_file.parent.mkdir(parents=True)
+    default_file.write_text("file-key\n")
+    assert key() == "file-key"
+    (tmp_path / "other-key").write_text("other-file-key")
+    write_config(tmp_path, {"jev": {"api_key_file": str(tmp_path / "other-key")}})
+    assert key() == "other-file-key"
+    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
+    assert key() == "cfg-key"
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-key")
+    assert key() == "env-key"
 
 
 def test_the_lead_label_matches_the_orchestrator():
