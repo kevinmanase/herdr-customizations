@@ -99,7 +99,7 @@ conversation stays open.
 ## Set it up
 
 Requirements: [Herdr](https://github.com/herdrdev/herdr) (checked with 0.9.1),
-Python 3.11+, `jq`, and Claude Code or Codex running inside a Herdr pane.
+Python 3.11+, `jq`, a TypeSafe key for Jev, and Claude Code or Codex running inside a Herdr pane.
 Linux and macOS both work. Follow the [setup guide](docs/setup.md).
 
 - [Claude skill](claude/skills/herdr/SKILL.md) and hooks:

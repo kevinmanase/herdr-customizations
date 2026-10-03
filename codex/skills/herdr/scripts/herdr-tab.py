@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
@@ -320,6 +319,8 @@ def jev_says_waiting(text):
     key = typesafe_key()
     if not key:
         return False
+    import urllib.request  # here, not at the top: most hook calls never reach Jev
+
     request = urllib.request.Request(
         os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone",
         data=json.dumps(

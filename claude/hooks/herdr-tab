@@ -16,10 +16,10 @@ already marks Claude's dialogs blocked; a reported state doesn't override it on 
 pane, so this doesn't try.) Outside Herdr it does nothing. It never fails a hook: every error
 exits 0.
 
-Optional: with a TypeSafe key (TYPESAFE_API_KEY, jev.api_key in ~/.config/team-floor/config.json,
-or ~/.config/typesafe/api-key), the Stop hook asks Jev whether the turn's last message waits on
-Kevin, so an ask the agent forgot to flag still shows. Only that message's last 1,500 characters
-are sent.
+Jev: the Stop hook asks Jev whether the turn's last message waits on Kevin, so an ask the agent
+forgot to flag still shows. It uses the TypeSafe key (TYPESAFE_API_KEY, jev.api_key in
+~/.config/team-floor/config.json, or ~/.config/typesafe/api-key) and sends only that message's last
+1,500 characters. With no key it sends nothing.
 """
 
 import json
@@ -28,7 +28,6 @@ import re
 import subprocess
 import sys
 import time
-import urllib.request
 
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
 READY_LABEL = READY + " ready"  # a cleared tab has no task, so no name
@@ -397,6 +396,8 @@ def jev_says_waiting(text):
             }
         },
     }
+    import urllib.request  # here, not at the top: most hook calls never reach Jev
+
     request = urllib.request.Request(
         JEV_URL,
         data=json.dumps(body).encode(),

@@ -135,13 +135,12 @@ permissions. Question hooks use Codex's `request_user_input` and
 `request_user_input_async`, including namespaced tool names. Keep flagging plain
 text asks yourself; a hook cannot reliably infer intent from prose.
 
-Optional Jev fallback: like the Claude setup, the Stop hook can classify the last
-assistant message when there's a TypeSafe key: `TYPESAFE_API_KEY`, `jev.api_key` in
+Jev: like the Claude setup, the Stop hook classifies the last assistant message with Jev,
+using the TypeSafe key: `TYPESAFE_API_KEY`, `jev.api_key` in
 `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default
-`~/.config/typesafe/api-key`).
-Only the last 1,500 characters go to TypeSafe. No key means no classifier request.
-Explicit ❓/❗ flags take precedence. Codex's `last_assistant_message` field is used directly; the
-helper does not depend on Claude transcript formats.
+`~/.config/typesafe/api-key`). Only the last 1,500 characters go to TypeSafe, and nothing
+does without a key. Explicit ❓/❗ flags take precedence. Codex's `last_assistant_message`
+field is used directly; the helper does not depend on Claude transcript formats.
 
 ## Inspect tabs or start agents when Kevin asks
 
