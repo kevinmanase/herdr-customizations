@@ -285,9 +285,10 @@ def needs(kind, ask):
     )
 
 
-# Peer traffic arrives as a prompt too: SendMessage from another Claude session, or a Codex report
-# typed in with `herdr agent prompt`. Only Kevin's own prompt answers his pending ask.
-PEER_PROMPTS = ("<cross-session-message", "Status from ")
+# Peer traffic arrives as a prompt too: SendMessage from another Claude session, a Codex report
+# typed in with `herdr agent prompt`, or a finished background task's notification. Only Kevin's
+# own prompt answers his pending ask.
+PEER_PROMPTS = ("<cross-session-message", "Status from ", "<task-notification")
 
 
 def from_kevin(payload):
