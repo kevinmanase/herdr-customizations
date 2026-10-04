@@ -285,14 +285,14 @@ def needs(kind, ask):
     )
 
 
-# Peer traffic arrives as a prompt too: SendMessage from another Claude session, a Codex report
-# typed in with `herdr agent prompt`, or a finished background task's notification. Only Kevin's
-# own prompt answers his pending ask.
-PEER_PROMPTS = ("<cross-session-message", "Status from ", "<task-notification")
+# Not every prompt is Kevin's: SendMessage from another Claude session, a Codex report typed in with
+# `herdr agent prompt`, and a finished background task's notification all arrive as prompts too.
+# Only Kevin's own prompt answers his pending ask.
+NOT_KEVIN = ("<cross-session-message", "Status from ", "<task-notification")
 
 
 def from_kevin(payload):
-    return not str(payload.get("prompt") or "").lstrip().startswith(PEER_PROMPTS)
+    return not str(payload.get("prompt") or "").lstrip().startswith(NOT_KEVIN)
 
 
 def set_status(status, clear_needs=True):
