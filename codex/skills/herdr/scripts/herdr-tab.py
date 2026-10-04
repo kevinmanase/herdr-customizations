@@ -323,18 +323,21 @@ def typesafe_key(problems=None):
 def jev_says_waiting(text, deadline=5):
     """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last JEV_CHARS characters,
     and nothing without a TypeSafe key. Never raises: a failed call, or one that takes over `deadline` seconds
-    (1 while Jev keeps timing out), counts as no, and JEV_FAILED says why until a call succeeds. Keep this,
-    ask_line and jev_warning identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py;
+    (1 for five minutes after Jev times out), counts as no, and JEV_FAILED says why until a call succeeds. Keep
+    this, ask_line and jev_warning identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py;
     tests/test_lanes.py compares them."""
     key = typesafe_key() if isinstance(text, str) and text.strip() else ""
     if not key:
         return False
+    backoff = False
     try:
-        with open(JEV_FAILED, encoding="utf-8") as handle:
-            if handle.read().startswith("TimeoutError"):
-                deadline = min(deadline, 1)  # don't hold every turn end while Jev is down
+        if time.time() - os.path.getmtime(JEV_FAILED) < 300:
+            with open(JEV_FAILED, encoding="utf-8") as handle:
+                backoff = handle.read().startswith("TimeoutError")
     except (OSError, ValueError):
         pass
+    if backoff:  # Jev timed out in the last five minutes: don't hold every turn end meanwhile
+        deadline = min(deadline, 1)
     import urllib.request  # here, not at the top: most hook calls never reach Jev
 
     class NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -382,7 +385,7 @@ def jev_says_waiting(text, deadline=5):
     try:
         if isinstance(answer, bool):
             os.remove(JEV_FAILED)
-        else:
+        elif not (backoff and isinstance(answer, TimeoutError)):  # let the five minutes run out
             # The HTTP status, or the network error's own text. Never other error text: it can quote the request.
             code, reason = getattr(answer, "code", None), getattr(answer, "reason", None)
             detail = f" {code}" if isinstance(code, int) else f" ({reason})" if isinstance(reason, OSError) else ""
@@ -406,7 +409,7 @@ def ask_line(text):
             code = not code
         elif line and not code and end > start and not raw.startswith(("    ", "\t", "#", ">", "|")):
             item = re.match(r"(?:[-*+]|\d+[.)])\s+", line)
-            line = re.split(r"(?<=[.!:;])\s+", line[item.end() if item else 0 :].strip("*_ "))[-1]
+            line = re.split(r"(?<=[.!])\s+(?=[A-Z])", line[item.end() if item else 0 :].strip("*_ "))[-1]
             if line.endswith("?"):
                 questions.append(line)
             elif line and not item:

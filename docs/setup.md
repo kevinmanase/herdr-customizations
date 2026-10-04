@@ -37,7 +37,7 @@ context.
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one
 turn can't land on the next. The hook marks the turn ✅ before it asks Jev, and
-its Jev call gives up after 5 seconds, or 1 while Jev keeps timing out.
+its Jev call gives up after 5 seconds, or after 1 for five minutes after Jev times out.
 
 ## Add the TypeSafe key
 

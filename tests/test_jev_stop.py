@@ -5,6 +5,7 @@ Jev's reply here, answers.<question>.noul, has the shape the live endpoint retur
 
 import io
 import json
+import os
 import runpy
 import socket
 import sys
@@ -168,6 +169,9 @@ def test_a_broken_failure_note_never_costs_a_session_its_context(start, env, tmp
         ("Which do you want?\n1. Merge now\n2. Wait for CI", "Which do you want?"),
         ("Tests pass.\n**Merge it?**", "Merge it?"),
         ("The cache key missed the lockfile. Should I bump it?", "Should I bump it?"),
+        ("Should I deploy this to staging vs. prod?", "Should I deploy this to staging vs. prod?"),
+        ("Do you want option A (faster; riskier) or B?", "Do you want option A (faster; riskier) or B?"),
+        ("Should I take the fix from PR #41, i.e. retry it?", "Should I take the fix from PR #41, i.e. retry it?"),
         (
             "## Why did CI fail?\nThe cache key missed it.\n\nApprove the fix and I'll push it.",
             "Approve the fix and I'll push it.",
@@ -230,9 +234,18 @@ def test_a_slow_jev_never_holds_the_hook_and_gets_less_time_while_it_stays_slow(
     calls = [thread for thread in threading.enumerate() if thread.name == "jev"]
     assert calls and all(thread.daemon for thread in calls)  # so a call still running can't keep a hook alive
     assert "its last call failed: TimeoutError at " in helper["jev_warning"]()
+    note = Path(helper["JEV_FAILED"])
+    stamp = note.stat().st_mtime - 60
+    os.utime(note, (stamp, stamp))
     started = time.monotonic()
     assert helper["jev_says_waiting"]("Should I merge it now?") is False  # a second, not five
     assert time.monotonic() - started < 1.4
+    assert note.stat().st_mtime == stamp  # a timeout while backing off doesn't restart the five minutes
+    stamp -= 300
+    os.utime(note, (stamp, stamp))
+    jev.before_reply = lambda: time.sleep(1.2)
+    assert helper["jev_says_waiting"]("Should I merge it now?") is True  # the full deadline again
+    assert helper["jev_warning"]() == ""
 
 
 def test_check_jev_says_whether_the_stop_hook_can_use_jev(herdr, jev):
