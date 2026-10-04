@@ -2,7 +2,8 @@
 """A fake `herdr` CLI. State lives in the JSON file named by FAKE_HERDR_STATE; calls are logged.
 
 state["fail"] maps the start of a command ("tab rename") to the error code it fails with, or "raw"
-for an error that isn't JSON. `agent start` records whether the fleet queue's lock was free.
+for an error that isn't JSON; state["fail_once"] does the same for the next matching call only.
+`agent start` records whether the fleet queue's lock was free.
 """
 
 import fcntl
@@ -27,8 +28,9 @@ def done(result=None, error=None):
     sys.exit(0)
 
 
-for prefix, code in state.get("fail", {}).items():
+for prefix, code in [*state.get("fail", {}).items(), *state.get("fail_once", {}).items()]:
     if " ".join(args).startswith(prefix):
+        state.get("fail_once", {}).pop(prefix, None)
         if code == "raw":
             with open(path, "w") as handle:
                 json.dump(state, handle)

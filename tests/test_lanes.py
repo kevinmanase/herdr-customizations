@@ -15,6 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 ORCHESTRATOR = ROOT / "claude/hooks/herdr-orchestrator"
 TAB = ROOT / "claude/hooks/herdr-tab"
+CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
+HELPERS = [TAB, CODEX_TAB]
+COPIES = [ORCHESTRATOR, *HELPERS]
 LANES = {
     "lanes": [
         {"id": "api", "name": "API", "about": "Server endpoints, webhooks, database"},
@@ -131,14 +134,6 @@ def test_routing_takes_the_key_from_the_environment_then_the_config(herdr, jev, 
     assert jev.headers[0]["Authorization"] == f"Bearer {sent}"
 
 
-def test_the_stop_hook_reads_the_key_from_the_team_floor_config(herdr, jev, tmp_path):
-    write_config(tmp_path, {"jev": {"api_key": "cfg-key"}})
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_URL=jev.url)
-    assert jev.headers[0]["Authorization"] == "Bearer cfg-key"
-
-
 @pytest.mark.parametrize("reply", [529, {"answers": {}}])
 def test_a_jev_error_never_blocks_routing(herdr, jev, lanes, queue, reply):
     jev.reply = reply
@@ -148,6 +143,15 @@ def test_a_jev_error_never_blocks_routing(herdr, jev, lanes, queue, reply):
     assert result.returncode == 3
     assert "rule: ask Kevin (Jev unavailable:" in result.stdout
     assert brief.exists()
+
+
+def test_routing_never_follows_a_redirect(herdr, jev, lanes, queue):
+    jev.reply = (302, {"Location": jev.url + "/elsewhere"})
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("Fix the Stripe webhook retries.")
+    result = route(herdr, jev, brief)
+    assert result.returncode == 3 and "HTTPError" in result.stdout
+    assert len(jev.headers) == 1  # the key went nowhere else
 
 
 def test_routing_needs_the_lane_list(herdr, jev, queue):
@@ -437,26 +441,31 @@ def test_a_herdr_error_is_not_a_missing_lead(herdr):
     assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
 
 
-def test_the_stop_hook_uses_the_same_jev_endpoint(herdr, jev):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
-    assert jev.requests[0]["state"] == "Should I merge it now?"
-    assert herdr.label().startswith("❓")
+@pytest.mark.parametrize(
+    "name, scripts",
+    [
+        ("typesafe_key", COPIES),
+        ("jev_says_waiting", HELPERS),
+        ("ask_line", HELPERS),
+        ("jev_warning", HELPERS),
+    ],
+)
+def test_the_shared_copies_are_identical(name, scripts):
+    assert len({inspect.getsource(runpy.run_path(str(script))[name]) for script in scripts}) == 1
 
 
-CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
-COPIES = [ORCHESTRATOR, TAB, CODEX_TAB]
-
-
-def test_the_three_typesafe_key_copies_are_identical():
-    assert len({inspect.getsource(runpy.run_path(str(script))["typesafe_key"]) for script in COPIES}) == 1
+def test_the_copies_share_the_jev_constants(env, tmp_path):
+    orchestrator, claude, codex = (runpy.run_path(str(script)) for script in COPIES)
+    assert orchestrator["JEV_URL"] == claude["JEV_URL"] == codex["JEV_URL"]
+    assert orchestrator["JEV_CHARS"] == claude["JEV_CHARS"] == codex["JEV_CHARS"]
+    env(XDG_STATE_HOME=tmp_path)
+    claude, codex = (runpy.run_path(str(script)) for script in HELPERS)
+    assert claude["JEV_FAILED"] == codex["JEV_FAILED"] == str(tmp_path / "herdr-tab/jev-failed")
 
 
 @pytest.mark.parametrize("script", COPIES, ids=["orchestrator", "herdr-tab", "codex-herdr-tab"])
-def test_every_copy_finds_the_typesafe_key_the_same_way(script, tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+def test_every_copy_finds_the_typesafe_key_the_same_way(script, env, tmp_path, monkeypatch):
+    env(HOME=tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "ts").write_text("repo-key")
@@ -506,38 +515,6 @@ def test_route_says_why_there_is_no_key(herdr, jev, lanes, queue, tmp_path):
     brief.write_text("Fix the Stripe webhook retries.")
     result = route(herdr, jev, brief, key="")
     assert "can't read" in result.stdout and "config.json" in result.stdout
-
-
-def test_the_stop_hook_skips_jev_when_an_ask_already_shows(herdr, jev):
-    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "❓ merge now? · login fix"})
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
-    assert not jev.requests
-    assert herdr.label().startswith("❓")
-
-
-def test_the_stop_hook_keeps_a_label_that_changed_while_jev_answered(herdr, jev):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    jev.before_reply = lambda: herdr.set_state(tabs={**herdr.state["tabs"], "t1": "⏳ login fix"})
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
-    assert jev.requests and herdr.label() == "⏳ login fix"
-
-
-def test_the_stop_hook_can_turn_jev_off(herdr, jev):
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    env = {"TYPESAFE_API_KEY": "test-key", "TYPESAFE_API_URL": jev.url, "HERDR_JEV_ENABLED": "0"}
-    herdr.run(TAB, "hook", "stop", stdin=payload, **env)
-    assert not jev.requests
-
-
-def test_the_codex_helper_honours_the_jev_url(jev, monkeypatch):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
-    monkeypatch.setenv("TYPESAFE_API_URL", jev.url)
-    monkeypatch.delenv("HERDR_JEV_ENABLED", raising=False)
-    assert runpy.run_path(str(CODEX_TAB))["jev_says_waiting"]("Should I merge it now?") is True
-    assert jev.headers[0]["Authorization"] == "Bearer test-key"
 
 
 def test_the_lead_label_matches_the_orchestrator():

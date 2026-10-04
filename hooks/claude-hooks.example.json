@@ -74,8 +74,7 @@
           {
             "type": "command",
             "command": "/ABSOLUTE/HOME/.claude/hooks/herdr-tab hook stop",
-            "timeout": 15,
-            "async": true
+            "timeout": 15
           }
         ]
       }

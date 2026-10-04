@@ -4,14 +4,20 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
-import urllib.request
+import threading
+import time
 from pathlib import Path
 
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
 SEPARATOR = " · "
 READY_LABEL = READY + " ready"
+JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
+JEV_CHARS = 1500
+STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+JEV_FAILED = os.path.join(STATE_HOME, "herdr-tab/jev-failed")  # shared by the Claude and Codex helpers
 SCRIPT = Path(__file__).resolve()
 SKILL = SCRIPT.parent.parent / "SKILL.md"
 REMINDER = (
@@ -259,7 +265,7 @@ def clear_when_done(approved_pane=None, approved_session=None):
         )
     if read(me["tab_id"])[0] in (QUESTION, REQUEST):
         raise RuntimeError("Resolve the pending ask before clearing this session")
-    log_dir = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "herdr-codex"
+    log_dir = Path(STATE_HOME) / "herdr-codex"
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / "clear.log").open("a") as log:
         subprocess.Popen(
@@ -287,7 +293,7 @@ def typesafe_key(problems=None):
                 jev = json.load(handle).get("jev", {})
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, AttributeError) as error:
+        except Exception as error:
             problems.append(f"can't read {folder}/config.json ({type(error).__name__})")
         jev = jev if isinstance(jev, dict) else {}
         key = jev.get("api_key") if isinstance(jev.get("api_key"), str) else ""
@@ -314,34 +320,118 @@ def typesafe_key(problems=None):
     return key
 
 
-def jev_says_waiting(text):
-    if os.environ.get("HERDR_JEV_ENABLED") == "0" or not text.strip():
-        return False
-    key = typesafe_key()
+def jev_says_waiting(text, deadline=5):
+    """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last JEV_CHARS characters,
+    and nothing without a TypeSafe key. Never raises: a failed call, or one that takes over `deadline` seconds
+    (1 for five minutes after Jev times out), counts as no, and JEV_FAILED says why until a call succeeds. Keep
+    this, ask_line and jev_warning identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py;
+    tests/test_lanes.py compares them."""
+    key = typesafe_key() if isinstance(text, str) and text.strip() else ""
     if not key:
         return False
-    request = urllib.request.Request(
-        os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone",
-        data=json.dumps(
-            {
-                "state": text[-1500:],
-                "model": "jev-latest",
-                "questions": {
-                    "waits_on_reader": {
-                        "type": "noul",
-                        "instructions": "Does this message end by waiting on the reader before work can continue?",
-                        "criteria": {
-                            "true": "Asks the reader a question, or for a decision, approval or action",
-                            "false": "Reports results or status; nothing is needed from the reader",
-                        },
-                    }
+    backoff = False
+    try:
+        if time.time() - os.path.getmtime(JEV_FAILED) < 300:
+            with open(JEV_FAILED, encoding="utf-8") as handle:
+                backoff = handle.read().startswith("TimeoutError")
+    except (OSError, ValueError):
+        pass
+    if backoff:  # Jev timed out in the last five minutes: don't hold every turn end meanwhile
+        deadline = min(deadline, 1)
+    import urllib.request  # here, not at the top: most hook calls never reach Jev
+
+    class NoRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args):  # following one would send the key wherever it points
+            return None
+
+    body = {
+        "state": text[-JEV_CHARS:],
+        "model": "jev-latest",
+        "questions": {
+            "waits_on_reader": {
+                "type": "noul",
+                "instructions": "Does this message end by waiting on the reader before work can continue?",
+                "criteria": {
+                    "true": "Asks the reader a question, or for a decision, approval or action",
+                    "false": "Reports results or status; nothing is needed from the reader",
                 },
             }
-        ).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        },
+    }
+    answers = []
+
+    def ask():
+        try:
+            request = urllib.request.Request(
+                JEV_URL,
+                data=json.dumps(body).encode(),
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            )
+            # The timeout limits each connect and read, so a dead address gives way to the next one.
+            with urllib.request.build_opener(NoRedirects).open(request, timeout=2) as response:
+                noul = json.load(response)["answers"]["waits_on_reader"]["noul"]
+            if type(noul) not in (int, float) or not 0 <= noul <= 1:
+                raise ValueError("noul is not a probability")
+            answers.append(noul >= 0.5)
+        except Exception as error:
+            answers.append(error)
+
+    # The deadline covers the whole call, a slow DNS lookup included, which the timeout doesn't. A call still
+    # running when it passes ends with the hook, since the thread is a daemon.
+    thread = threading.Thread(target=ask, name="jev", daemon=True)
+    thread.start()
+    thread.join(deadline)
+    answer = answers[0] if answers else TimeoutError()
+    try:
+        if isinstance(answer, bool):
+            os.remove(JEV_FAILED)
+        elif not (backoff and isinstance(answer, TimeoutError)):  # let the five minutes run out
+            # The HTTP status, or the network error's own text. Never other error text: it can quote the request.
+            code, reason = getattr(answer, "code", None), getattr(answer, "reason", None)
+            detail = f" {code}" if isinstance(code, int) else f" ({reason})" if isinstance(reason, OSError) else ""
+            os.makedirs(os.path.dirname(JEV_FAILED), exist_ok=True)
+            with open(JEV_FAILED, "w", encoding="utf-8") as handle:
+                handle.write(f"{type(answer).__name__}{detail} at {time.strftime('%Y-%m-%d %H:%M')}")
+    except OSError:
+        pass
+    return answer is True
+
+
+def ask_line(text):
+    """The ask to show for `text`, a message Jev says waits on the reader, from the part Jev saw: the last
+    sentence of its last question, else of its last plain line, else "reply needed". Code, headings, quotes
+    and tables don't count, and list items count only as questions."""
+    questions, plain, code, start, end = [], [], False, len(text) - JEV_CHARS, 0
+    for raw in text.splitlines(keepends=True):
+        end += len(raw)
+        line = raw.strip()
+        if line.startswith(("```", "~~~")):
+            code = not code
+        elif line and not code and end > start and not raw.startswith(("    ", "\t", "#", ">", "|")):
+            item = re.match(r"(?:[-*+]|\d+[.)])\s+", line)
+            line = re.split(r"(?<=[.!])\s+(?=[A-Z])", line[item.end() if item else 0 :].strip("*_ "))[-1]
+            if line.endswith("?"):
+                questions.append(line)
+            elif line and not item:
+                plain.append(line)
+    return (questions or plain or ["reply needed"])[-1]
+
+
+def jev_warning():
+    """A line for Kevin when the Stop hook can't ask Jev, or "" when it can. Never raises."""
+    problems = []
+    if typesafe_key(problems):
+        try:
+            with open(JEV_FAILED, encoding="utf-8") as handle:
+                why = "its last call failed: " + handle.read().strip()
+        except (OSError, ValueError):
+            return ""
+    else:
+        why = "; ".join(["no usable TypeSafe key", *problems])
+    return (
+        f"Herdr: Jev isn't working ({why}), so a question an agent forgets to flag won't light up its tab. "
+        "See docs/setup.md in herdr-customizations."
     )
-    with urllib.request.urlopen(request, timeout=4) as response:
-        return float(json.load(response)["answers"]["waits_on_reader"]["noul"]) >= 0.5
 
 
 def hook(payload):
@@ -356,6 +446,9 @@ def hook(payload):
     if event == "SessionStart":
         mine, context = session_role()
         output["hookSpecificOutput"]["additionalContext"] += " " + context
+        warning = jev_warning()
+        if warning:
+            output["systemMessage"] = warning
         source = payload.get("source")
         if source in ("startup", "clear"):
             # Both start a fresh task. Keeping the old name on startup leaves
@@ -382,17 +475,23 @@ def hook(payload):
             render(tab, WORKING, "", task)
         # request_user_input_async returns before the human answers. Keep ❓.
     elif event == "Stop":
-        if read(current_tab())[0] not in (QUESTION, REQUEST):
-            text = payload.get("last_assistant_message") or ""
-            try:
-                waiting = jev_says_waiting(text)
-            except Exception:
-                waiting = False
-            if waiting:
-                lines = [line for line in text.splitlines() if line.strip()]
-                needs(QUESTION, lines[-1] if lines else "reply needed")
-            else:
-                set_status(DONE)
+        # Codex runs this before it takes Kevin's next prompt, so Jev's answer can't land on the next turn.
+        try:
+            tab = current_tab()
+            status, _, name = read(tab)
+        except Exception:  # a Herdr hiccup: set_status reads again
+            set_status(DONE)
+            return output
+        if status in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
+            return output
+        if status != DONE:
+            render(tab, DONE, "", name)  # now, so the turn reads done even if the hook is cut short
+        text = payload.get("last_assistant_message") or ""
+        failing = os.path.exists(JEV_FAILED)
+        if jev_says_waiting(text) and read(tab)[0] == DONE:  # a prompt or ask that landed meanwhile wins
+            needs(QUESTION, ask_line(text))
+        if not failing and os.path.exists(JEV_FAILED):  # Jev just started failing: tell Kevin now, once
+            output["systemMessage"] = jev_warning()
     return output
 
 
@@ -443,3 +542,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    if any(thread.daemon for thread in threading.enumerate()):
+        # A Jev call is still running. Skip the interpreter's teardown, which can crash under a thread that's
+        # inside OpenSSL; nothing is left to clean up.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
