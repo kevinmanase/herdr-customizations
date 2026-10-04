@@ -36,7 +36,11 @@ def test_name_keeps_status_and_an_ask_survives_stop(herdr):
 def test_a_peer_message_keeps_the_ask(herdr):
     herdr.run(TAB, "name", "🔍 login bug")
     herdr.run(TAB, "ask", "ship today?")
-    for prompt in ('<cross-session-message from="eng-1">merged</cross-session-message>', "Status from p3: done"):
+    for prompt in (
+        '<cross-session-message from="eng-1">merged</cross-session-message>',
+        "Status from p3: done",
+        "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>",
+    ):
         herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"prompt": prompt}))
         assert herdr.label() == "❓ ship today? · 🔍 login bug"
     herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"prompt": "yes, ship it"}))

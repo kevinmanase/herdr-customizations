@@ -34,7 +34,7 @@ A hook can't reliably tell when a plain-text reply waits on Kevin: Jev (below) c
 ~/.claude/hooks/herdr-tab request "run gcloud auth login in the cli tab"
 ```
 
-Flagging puts the ask in the tab's label, for example `❓ merge the PR now, or after your phone check? · 🚀 login fix PR open`, and pops a Herdr notification. The Stop hook keeps the flag. Kevin's next message, or his answer to a dialog, clears it and turns the tab back to ⏳. A peer's message (`<cross-session-message …>` or `Status from …`) leaves it. Write the ask so he can act on it from the tab strip alone. Use `ask` when he has to reply, and `request` when he has to do something outside this conversation.
+Flagging puts the ask in the tab's label, for example `❓ merge the PR now, or after your phone check? · 🚀 login fix PR open`, and pops a Herdr notification. The Stop hook keeps the flag. Kevin's next message, or his answer to a dialog, clears it and turns the tab back to ⏳. A peer's message (`<cross-session-message …>` or `Status from …`) or a background task's `<task-notification>` leaves it. Write the ask so he can act on it from the tab strip alone. Use `ask` when he has to reply, and `request` when he has to do something outside this conversation.
 
 ### Name: everything after the status
 
