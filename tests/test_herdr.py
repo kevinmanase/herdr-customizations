@@ -33,7 +33,7 @@ def test_name_keeps_status_and_an_ask_survives_stop(herdr):
     assert herdr.label() == "⏳ 🔍 login bug"
 
 
-def test_a_peer_message_keeps_the_ask(herdr):
+def test_peer_and_task_prompts_keep_the_ask(herdr):
     herdr.run(TAB, "name", "🔍 login bug")
     herdr.run(TAB, "ask", "ship today?")
     for prompt in (
