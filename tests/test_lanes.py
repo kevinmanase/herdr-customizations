@@ -299,11 +299,11 @@ def test_next_waits_for_a_new_tab_s_shell(herdr, queue):
 
 
 def test_next_closes_a_tab_it_could_not_start_in(herdr, queue):
-    herdr.set_state(fail={"agent start": "agent_pane_busy"})
+    herdr.set_state(fail={"agent start": "agent_start_timeout"})
     (queue / "01-eng-1.md").write_text("Fix the login bug.")
     result = herdr.run(ORCHESTRATOR, "next")
     assert result.returncode == 1
-    assert "agent_pane_busy" in result.stderr
+    assert "agent_start_timeout" in result.stderr
     assert ["tab", "close", "t3"] in herdr.state["calls"]
     assert set(herdr.state["tabs"]) == {"t1", "t9"}
     assert (queue / "01-eng-1.md").exists()

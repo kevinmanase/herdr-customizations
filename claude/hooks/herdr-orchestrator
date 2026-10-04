@@ -53,7 +53,7 @@ STATE = os.path.expanduser("~/.local/state/orchestrator")
 WORK_DIR = os.path.expanduser(os.environ.get("HERDR_WORK_DIR") or os.getcwd())
 QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herdr-fleet/queue")
 MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
-SHELL_TRIES = 20  # agent starts half a second apart while a new tab's shell isn't ready
+SHELL_TRIES, SHELL_WAIT = 20, 0.5  # agent starts, and seconds between them, while a new tab's shell starts
 GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
 LANES = os.path.expanduser("~/.config/team-floor/lanes.json")
 LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so lead-<lane> is a valid Herdr agent name
@@ -282,6 +282,21 @@ def agent_name(brief):
     return brief[: -len(".md")].split("-", 1)[-1]
 
 
+def start_in_new_tab(name, pane):
+    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
+    for attempt in range(SHELL_TRIES):
+        try:
+            herdr(
+                "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
+                timeout=150,
+            )  # fmt: skip
+            return
+        except RuntimeError as error:
+            if error_code(error) != "agent_pane_busy" or attempt == SHELL_TRIES - 1:
+                raise
+        time.sleep(SHELL_WAIT)
+
+
 def start_session(name, label=None):
     """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
     # A cleared session is already running and fresh, so reusing one costs no memory.
@@ -311,17 +326,7 @@ def start_session(name, label=None):
     tab = herdr("tab", "create", "--workspace", workspace, "--label", label or name, "--cwd", WORK_DIR, "--no-focus")
     pane = tab["root_pane"]["pane_id"]
     try:
-        for attempt in range(SHELL_TRIES):
-            try:
-                herdr(
-                    "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
-                    timeout=150,
-                )  # fmt: skip
-                break
-            except RuntimeError as error:  # a new tab's shell can still be starting
-                if error_code(error) != "agent_pane_busy" or attempt == SHELL_TRIES - 1:
-                    raise
-                time.sleep(0.5)
+        start_in_new_tab(name, pane)
     except Exception:  # the brief stays queued, so the next try opens its own tab
         with contextlib.suppress(Exception):
             herdr("tab", "close", tab["tab"]["tab_id"])
