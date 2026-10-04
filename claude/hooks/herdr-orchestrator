@@ -392,7 +392,7 @@ def typesafe_key(problems=None):
                 jev = json.load(handle).get("jev", {})
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, AttributeError) as error:
+        except (OSError, ValueError, AttributeError, RecursionError) as error:
             problems.append(f"can't read {folder}/config.json ({type(error).__name__})")
         jev = jev if isinstance(jev, dict) else {}
         key = jev.get("api_key") if isinstance(jev.get("api_key"), str) else ""

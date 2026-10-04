@@ -33,6 +33,26 @@ Codex asks you to trust new hook definitions in `/hooks`. Claude picks up
 settings changes on its own; start a new session to get the session hook's
 context.
 
+Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
+Code takes the next prompt only after it returns, so Jev's answer about one
+turn can't land on the next. Each Jev call gives up after 5 seconds.
+
+## Add the TypeSafe key
+
+Jev needs a TypeSafe key. Put it in `~/.config/team-floor/config.json`, the
+config the team floor also reads, as `{"jev": {"api_key": "<your key>"}}`. If
+the file already exists, add the `jev` entry to it. Use an editor, not a shell
+command, so the key stays out of your shell history. Then keep the file
+private:
+
+```sh
+chmod 600 ~/.config/team-floor/config.json
+```
+
+To check it, start a new Claude or Codex session in a Herdr pane. If Jev can't
+run, because there's no usable key or its last call failed, the session opens
+with a Herdr message saying why.
+
 ## Settings
 
 | Variable | Default | Used for |
@@ -41,7 +61,7 @@ context.
 | `HERDR_FLEET_QUEUE` | `~/.cache/herdr-fleet/queue` | briefs for `herdr-orchestrator next` |
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
 | `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
-| `TYPESAFE_API_KEY`, then `jev.api_key` in `~/.config/team-floor/config.json` (keep it `chmod 600`), then the file named by `jev.api_key_file` (relative to that folder), by default `~/.config/typesafe/api-key` | unset | lets the Stop hook ask Jev whether a reply waits on you, and `route` ask Jev for a brief's lane |
+| `TYPESAFE_API_KEY`, then `jev.api_key` in `~/.config/team-floor/config.json` (keep it `chmod 600`), then the file named by `jev.api_key_file` (relative to that folder), by default `~/.config/typesafe/api-key` | none: add one (above) | the key for both Jev calls: the Stop hook asks whether a reply waits on you, and `route` asks for a brief's lane |
 | `TYPESAFE_API_URL` | TypeSafe's endpoint | where both Jev calls go (the Stop hook and `route`); the tests point it at a local fake |
 | `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |
 

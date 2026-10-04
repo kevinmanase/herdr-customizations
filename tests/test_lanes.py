@@ -8,6 +8,7 @@ docs.typesafe.ai (quick start and API reference): answers.<question> holds `type
 import inspect
 import json
 import runpy
+import time
 from pathlib import Path
 
 import pytest
@@ -437,20 +438,144 @@ def test_a_herdr_error_is_not_a_missing_lead(herdr):
     assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
 
 
-def test_the_stop_hook_uses_the_same_jev_endpoint(herdr, jev):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
-    assert jev.requests[0]["state"] == "Should I merge it now?"
-    assert herdr.label().startswith("❓")
-
-
 CODEX_TAB = ROOT / "codex/skills/herdr/scripts/herdr-tab.py"
 COPIES = [ORCHESTRATOR, TAB, CODEX_TAB]
+WAITING = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
 
 
-def test_the_three_typesafe_key_copies_are_identical():
-    assert len({inspect.getsource(runpy.run_path(str(script))["typesafe_key"]) for script in COPIES}) == 1
+@pytest.mark.parametrize(
+    "name, scripts",
+    [
+        ("typesafe_key", COPIES),
+        ("jev_says_waiting", [TAB, CODEX_TAB]),
+        ("ask_line", [TAB, CODEX_TAB]),
+        ("jev_warning", [TAB, CODEX_TAB]),
+    ],
+)
+def test_the_shared_copies_are_identical(name, scripts):
+    assert len({inspect.getsource(runpy.run_path(str(script))[name]) for script in scripts}) == 1
+
+
+def test_both_helpers_share_the_jev_endpoint_and_failure_note():
+    claude, codex = (runpy.run_path(str(script)) for script in (TAB, CODEX_TAB))
+    assert (claude["JEV_URL"], claude["JEV_FAILED"]) == (codex["JEV_URL"], codex["JEV_FAILED"])
+
+
+def codex_hook(herdr, monkeypatch, payload, **env):
+    """Run the Codex helper's hook in this process, on pane p1: the test runner isn't a Codex process it can find."""
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    for name, value in {**herdr.environ, **env}.items():
+        monkeypatch.setenv(name, value)
+    hook = runpy.run_path(str(CODEX_TAB))["hook"]
+    hook.__globals__["resolve_hook_pane"] = lambda payload: "p1"
+    return hook(payload)
+
+
+@pytest.fixture(params=["claude", "codex"])
+def stop(request, herdr, jev, monkeypatch):
+    """Run one helper's Stop hook on a message, against the fake Herdr and the fake Jev."""
+
+    def run(message, **env):
+        env = {"TYPESAFE_API_URL": jev.url, **env}
+        if request.param == "claude":
+            herdr.run(TAB, "hook", "stop", stdin=json.dumps({"last_assistant_message": message}), **env)
+        else:
+            codex_hook(herdr, monkeypatch, {"hook_event_name": "Stop", "last_assistant_message": message}, **env)
+
+    return run
+
+
+def test_without_a_key_the_stop_hook_sends_nothing(stop, herdr, jev):
+    stop("Should I merge it now?")
+    assert not jev.requests
+    assert herdr.label() == "✅ ready"
+
+
+def test_the_stop_hook_sends_only_the_last_1500_characters(stop, herdr, jev):
+    jev.reply = WAITING
+    message = "x" * 5000 + "\nShould I merge it now?"
+    stop(message, TYPESAFE_API_KEY="test-key")
+    assert jev.headers[0]["Authorization"] == "Bearer test-key"
+    assert jev.requests[0]["state"] == message[-1500:]
+    assert herdr.label() == "❓ Should I merge it now? · ready"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [500, {"answers": {}}, {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.2}}}],
+    ids=["error", "malformed", "no"],
+)
+def test_the_stop_hook_ends_at_done_unless_jev_says_the_message_waits(stop, herdr, jev, reply):
+    jev.reply = reply
+    stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
+    assert jev.requests and herdr.label() == "✅ ready"
+
+
+@pytest.mark.parametrize(
+    "message, ask",
+    [
+        ("Should I run this on prod?\n\n```sql\nDELETE FROM jobs;\n```", "Should I run this on prod?"),
+        ("Which do you want?\n1. Merge now\n2. Wait for CI", "Which do you want?"),
+        ("Tests pass.\n**Merge it?**", "Merge it?"),
+        ("Over to you.\n```", "Over to you."),
+        ("```\n```", "reply needed"),
+    ],
+)
+def test_the_ask_is_the_last_question(message, ask):
+    assert runpy.run_path(str(TAB))["ask_line"](message) == ask
+
+
+def test_the_transcript_fallback_stops_at_the_turns_prompt(tmp_path):
+    last_text = runpy.run_path(str(TAB))["last_assistant_text"]
+    transcript = tmp_path / "transcript.jsonl"
+
+    def text_after(*entries):
+        transcript.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+        return last_text({"transcript_path": str(transcript)})
+
+    asked = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Should I merge it now?"}]}}
+    tool = {
+        "type": "assistant",
+        "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]},
+    }
+    result = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+    assert text_after(asked, tool, result, tool) == "Should I merge it now?"
+    assert text_after(asked, {"type": "user", "message": {"content": "yes, merge it"}}, tool) == ""
+    assert text_after(asked, {"type": "attachment", "attachment": {"type": "queued_command"}}, tool) == ""
+
+
+@pytest.mark.parametrize("script", [TAB, CODEX_TAB], ids=["herdr-tab", "codex-herdr-tab"])
+def test_a_slow_or_failing_jev_counts_as_no_until_it_answers(script, jev, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.setenv("TYPESAFE_API_URL", jev.url)
+    helper = runpy.run_path(str(script))
+    jev.before_reply = lambda: time.sleep(1)
+    started = time.monotonic()
+    assert helper["jev_says_waiting"]("Should I merge it now?", deadline=0.2) is False
+    assert time.monotonic() - started < 0.9
+    assert "its last call failed: TimeoutError" in helper["jev_warning"]()
+    jev.before_reply = None
+    jev.reply = 401
+    assert helper["jev_says_waiting"]("Should I merge it now?") is False
+    assert "HTTPError 401" in helper["jev_warning"]()
+    jev.reply = WAITING
+    assert helper["jev_says_waiting"]("Should I merge it now?") is True
+    assert helper["jev_warning"]() == ""
+    Path(helper["JEV_FAILED"]).write_bytes(b"\xff not text")
+    assert helper["jev_warning"]() == ""
+
+
+def test_session_start_tells_kevin_when_jev_cannot_run(herdr, monkeypatch):
+    payload = {"hook_event_name": "SessionStart", "source": "resume"}
+    result = herdr.run(TAB, "hook", "session", stdin=json.dumps(payload))
+    assert "no usable TypeSafe key" in json.loads(result.stdout)["systemMessage"]
+    assert "no usable TypeSafe key" in codex_hook(herdr, monkeypatch, payload)["systemMessage"]
+    result = herdr.run(TAB, "hook", "session", stdin=json.dumps(payload), TYPESAFE_API_KEY="test-key")
+    assert "systemMessage" not in json.loads(result.stdout)
+    assert "systemMessage" not in codex_hook(herdr, monkeypatch, payload, TYPESAFE_API_KEY="test-key")
 
 
 @pytest.mark.parametrize("script", COPIES, ids=["orchestrator", "herdr-tab", "codex-herdr-tab"])
@@ -474,6 +599,9 @@ def test_every_copy_finds_the_typesafe_key_the_same_way(script, tmp_path, monkey
     folder = tmp_path / ".config/team-floor"
     folder.mkdir(parents=True)
     (folder / "config.json").write_text('{"jev": {"api_key": "x"},}')
+    found, problems = key()
+    assert found == "file-key" and "config.json" in problems[0]
+    (folder / "config.json").write_text("[" * 100_000 + "]" * 100_000)  # too deep for json before Python 3.14
     found, problems = key()
     assert found == "file-key" and "config.json" in problems[0]
     (folder / "ts").write_text("folder-key")
@@ -508,28 +636,24 @@ def test_route_says_why_there_is_no_key(herdr, jev, lanes, queue, tmp_path):
     assert "can't read" in result.stdout and "config.json" in result.stdout
 
 
-def test_the_stop_hook_skips_jev_when_an_ask_already_shows(herdr, jev):
+def test_the_stop_hook_skips_jev_when_an_ask_already_shows(stop, herdr, jev):
     herdr.set_state(tabs={**herdr.state["tabs"], "t1": "❓ merge now? · login fix"})
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
+    stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
     assert not jev.requests
-    assert herdr.label().startswith("❓")
+    assert herdr.label() == "❓ merge now? · login fix"
 
 
-def test_the_stop_hook_keeps_a_label_that_changed_while_jev_answered(herdr, jev):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
+def test_the_stop_hook_keeps_a_label_that_changed_while_jev_answered(stop, herdr, jev):
+    jev.reply = WAITING
     jev.before_reply = lambda: herdr.set_state(tabs={**herdr.state["tabs"], "t1": "⏳ login fix"})
-    payload = json.dumps({"last_assistant_message": "Should I merge it now?"})
-    herdr.run(TAB, "hook", "stop", stdin=payload, TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL=jev.url)
+    stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
     assert jev.requests and herdr.label() == "⏳ login fix"
 
 
-def test_the_codex_helper_honours_the_jev_url(jev, monkeypatch):
-    jev.reply = {"answers": {"waits_on_reader": {"type": "noul", "noul": 0.9}}}
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
-    monkeypatch.setenv("TYPESAFE_API_URL", jev.url)
-    assert runpy.run_path(str(CODEX_TAB))["jev_says_waiting"]("Should I merge it now?") is True
-    assert jev.headers[0]["Authorization"] == "Bearer test-key"
+def test_claude_waits_for_the_stop_hook():
+    # Claude Code takes the next prompt only after a synchronous Stop hook, so Jev can't answer into the next turn.
+    hooks = json.loads((ROOT / "hooks/claude-hooks.example.json").read_text())["hooks"]["Stop"]
+    assert not any(hook.get("async") for entry in hooks for hook in entry["hooks"])
 
 
 def test_the_lead_label_matches_the_orchestrator():

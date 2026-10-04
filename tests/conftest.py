@@ -43,6 +43,8 @@ def herdr(tmp_path):
     }
 
     class Herdr:
+        environ = env
+
         def run(self, script, *args, stdin="", **extra):
             return subprocess.run(
                 [sys.executable, str(script), *args],

@@ -22,12 +22,12 @@ The label reads `<status> <name>`, for example `⏳ 🧪 login bug`. When you ne
 | ⏳ | working | a hook, when Kevin sends a message or answers a dialog |
 | ✅ | done: nothing needed from Kevin | a hook, when your turn ends |
 | ⚪ | ready: a cleared session with no task yet; the label reads `⚪ ready` | a hook, on `/clear` |
-| ❓ | Kevin needs to answer or decide | you (`ask`), or a hook on a question dialog or plan approval |
+| ❓ | Kevin needs to answer or decide | you (`ask`), or a hook: on a question dialog, a plan approval, or a last message Jev reads as waiting on him |
 | ❗ | Kevin needs to do something: log in, approve, check his phone, run a command | you (`request`), or a hook on a permission prompt |
 
 ### When you need Kevin, flag it
 
-A hook can't tell when a plain-text reply waits on Kevin. So before you end any turn that waits on him, flag it with the ask itself, in a few words:
+A hook can't reliably tell when a plain-text reply waits on Kevin: Jev (below) catches some, not all. So before you end any turn that waits on him, flag it with the ask itself, in a few words:
 
 ```bash
 ~/.claude/hooks/herdr-tab ask "merge the PR now, or after your phone check?"
@@ -65,7 +65,7 @@ Rename when you judge the old name has stopped describing the work: a new stage,
 
 ### Jev
 
-The Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin, so a question you forgot to flag still shows ❓. The key can be `TYPESAFE_API_KEY` in the environment, `jev.api_key` in `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default `~/.config/typesafe/api-key`), checked in that order. The hook sends Jev only the last 1,500 characters of that message. Without a key, nothing leaves the machine.
+When nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with the message's last question as the ask. It's a safety net, not a reason to skip flagging: Jev can miss, and it can fail. It needs a TypeSafe key: `TYPESAFE_API_KEY` in the environment, `jev.api_key` in `~/.config/team-floor/config.json`, or the file named by `jev.api_key_file` there (by default `~/.config/typesafe/api-key`), checked in that order. The hook sends Jev only the last 1,500 characters of the message, and nothing without a key. When Jev can't run, the next session start tells Kevin why.
 
 ## Finish; clear only with Kevin's approval
 

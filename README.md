@@ -30,6 +30,9 @@ The tab labels follow **status + stage + short task**:
 Workers rename their tabs at milestones: investigating, building, testing,
 reviewing, PR open, merged, or parked. The skill keeps the task and stage
 current. Hooks update turn state and flag questions or permission requests.
+When a turn ends with nothing flagged, Jev, TypeSafe's fast classifier, checks
+whether the agent's last message waits on me, so a question it forgot to flag
+still shows ❓.
 
 | Prefix | Meaning in this customization |
 | --- | --- |
@@ -109,8 +112,14 @@ Linux and macOS both work. Follow the [setup guide](docs/setup.md).
 - Hook examples for [Claude Code](hooks/claude-hooks.example.json) and
   [Codex](hooks/codex-hooks.example.json)
 
-Hooks never approve permissions and fail open when Herdr is unavailable.
-Conversations are cleared only after I approve the exact pane and session.
+Hooks never approve permissions and fail open when Herdr or Jev is
+unavailable. Conversations are cleared only after I approve the exact pane and
+session.
+
+With a TypeSafe key, the Stop hooks send the last 1,500 characters of each
+turn's last message to TypeSafe for Jev, and `route` sends the last 1,500
+characters of a brief with the lane names and descriptions. Without a key,
+nothing leaves the machine.
 
 ## Pair it with Agent Wire
 
