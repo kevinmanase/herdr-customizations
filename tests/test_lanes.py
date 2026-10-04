@@ -279,6 +279,36 @@ def test_a_quiet_lane_is_asked_back_once(herdr, lanes, queue):
     assert "handback api" in nudge
 
 
+def test_a_lane_without_a_queue_folder_is_asked_back(herdr, lanes, queue):
+    be_lead(herdr)
+    result = herdr.run(ORCHESTRATOR, "leads")
+    assert result.returncode == 0, result.stderr
+    assert "api: 0 queued, 0 open; asked lead-api to hand it back" in result.stdout
+    assert (queue / "api/.handback-asked").exists()
+
+
+def test_next_waits_for_a_new_tab_s_shell(herdr, queue):
+    herdr.set_state(fail_once={"agent start": "agent_pane_busy"})
+    (queue / "01-eng-1.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert started(herdr) == ["eng-1", "eng-1"]
+    assert [call[:2] for call in herdr.state["calls"]].count(["tab", "create"]) == 1
+    assert herdr.state["agents"]["eng-1"]["tab_id"] == "t3"
+    assert (queue / "started/01-eng-1.md").exists()
+
+
+def test_next_closes_a_tab_it_could_not_start_in(herdr, queue):
+    herdr.set_state(fail={"agent start": "agent_pane_busy"})
+    (queue / "01-eng-1.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 1
+    assert "agent_pane_busy" in result.stderr
+    assert ["tab", "close", "t3"] in herdr.state["calls"]
+    assert set(herdr.state["tabs"]) == {"t1", "t9"}
+    assert (queue / "01-eng-1.md").exists()
+
+
 def test_a_lead_hands_a_quiet_lane_back_and_stays_open(herdr, lanes, queue):
     be_lead(herdr, label="❓ merge order? · 🧭 lead-api")
     (queue / "api").mkdir()
