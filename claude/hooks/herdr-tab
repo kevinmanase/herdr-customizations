@@ -16,10 +16,8 @@ already marks Claude's dialogs blocked; a reported state doesn't override it on 
 pane, so this doesn't try.) Outside Herdr it does nothing. It never fails a hook: every error
 exits 0.
 
-Jev: the Stop hook asks Jev whether the turn's last message waits on Kevin, so an ask the agent
-forgot to flag still shows. It sends only that message's last 1,500 characters, and nothing without
-a TypeSafe key (typesafe_key() says where it looks). When Jev can't run, the session hook tells
-Kevin why.
+Jev: when nothing is flagged, the Stop hook asks Jev whether the turn's last message waits on Kevin,
+so an ask the agent forgot to flag still shows. See jev_says_waiting() and jev_warning().
 """
 
 import json
@@ -27,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
@@ -39,7 +38,8 @@ ORCHESTRATOR_LABEL = "👑 orchestrator"
 # A lane lead's tab: herdr-orchestrator's LEAD mark and LANE_ID rule (a test keeps them in step).
 LEAD_LABEL = re.compile(r"🧭 (lead-[a-z][a-z0-9_-]{0,26})")
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
-# Why the last Jev call failed, until one succeeds. The Claude and Codex helpers share it.
+JEV_CHARS = 1500
+# Shared with the Codex helper.
 JEV_FAILED = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "herdr/jev-failed")
 
 FLAG_HOW = (
@@ -309,39 +309,6 @@ def set_name(name):
     render(tab, status, ask, clean(name, 60))
 
 
-def last_assistant_text(payload):
-    """The turn's last text: Claude Code's last_assistant_message, else the transcript's last assistant
-    text since the turn's prompt. Text from before that prompt was already answered."""
-    text = payload.get("last_assistant_message")
-    if isinstance(text, str) and text.strip():
-        return text
-    path = payload.get("transcript_path")
-    if not path:
-        return ""
-    try:
-        with open(path, "rb") as transcript:
-            transcript.seek(0, os.SEEK_END)
-            transcript.seek(max(0, transcript.tell() - 400_000))
-            lines = transcript.read().decode("utf-8", "replace").splitlines()
-    except OSError:
-        return ""
-    for line in reversed(lines):
-        try:
-            entry = json.loads(line)
-            content = (entry.get("message") or {}).get("content")
-            queued = (entry.get("attachment") or {}).get("type") == "queued_command"
-        except (ValueError, AttributeError):
-            continue
-        blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
-        if entry.get("type") == "assistant":
-            texts = [block.get("text", "") for block in blocks if block.get("type") == "text"]
-            if any(t.strip() for t in texts):
-                return "\n".join(texts)
-        elif queued or (entry.get("type") == "user" and {block.get("type") for block in blocks} != {"tool_result"}):
-            return ""  # a prompt, or a message that reached the turn: it's newer than any text before it
-    return ""
-
-
 def typesafe_key(problems=None):
     """TYPESAFE_API_KEY, then jev.api_key in ~/.config/team-floor/config.json, then the file named by
     jev.api_key_file (relative paths start in ~/.config/team-floor), by default ~/.config/typesafe/api-key.
@@ -357,7 +324,7 @@ def typesafe_key(problems=None):
                 jev = json.load(handle).get("jev", {})
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, AttributeError, RecursionError) as error:
+        except (OSError, ValueError, AttributeError) as error:
             problems.append(f"can't read {folder}/config.json ({type(error).__name__})")
         jev = jev if isinstance(jev, dict) else {}
         key = jev.get("api_key") if isinstance(jev.get("api_key"), str) else ""
@@ -385,18 +352,17 @@ def typesafe_key(problems=None):
 
 
 def jev_says_waiting(text, deadline=5):
-    """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last 1,500 characters, and
-    nothing without a TypeSafe key. Never raises, and gives up after `deadline` seconds: a failed or slow call
-    counts as no, and JEV_FAILED says why until a call succeeds. Keep this, ask_line and jev_warning identical
-    in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py compares them."""
+    """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last JEV_CHARS characters,
+    and nothing without a TypeSafe key. A failed call, or one that takes over `deadline` seconds, counts as no,
+    and JEV_FAILED says why until a call succeeds. Keep this, ask_line and jev_warning identical in
+    claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py compares them."""
     key = typesafe_key() if text.strip() else ""
     if not key:
         return False
-    import threading
     import urllib.request  # here, not at the top: most hook calls never reach Jev
 
     body = {
-        "state": text[-1500:],
+        "state": text[-JEV_CHARS:],
         "model": "jev-latest",
         "questions": {
             "waits_on_reader": {
@@ -418,13 +384,13 @@ def jev_says_waiting(text, deadline=5):
                 data=json.dumps(body).encode(),
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(request, timeout=4) as response:
+            with urllib.request.urlopen(request) as response:
                 answers.append(float(json.load(response)["answers"]["waits_on_reader"]["noul"]) >= 0.5)
         except Exception as error:
             answers.append(error)
 
-    # urlopen's timeout limits each connect and read, not a slow DNS lookup or trying addresses in turn. So
-    # the call runs in a daemon thread, and a call still running at the deadline ends with the hook.
+    # The deadline covers the whole call, a slow DNS lookup included, which urlopen's own timeout doesn't.
+    # A call still running when it passes ends with the hook, since the thread is a daemon.
     thread = threading.Thread(target=ask, daemon=True)
     thread.start()
     thread.join(deadline)
@@ -443,11 +409,16 @@ def jev_says_waiting(text, deadline=5):
 
 
 def ask_line(text):
-    """The ask to show for `text`, a message Jev says waits on the reader: the last question in the part Jev
-    saw, else its last line that isn't a code fence."""
-    lines = [line.strip().strip("*_").strip() for line in text[-1500:].splitlines()]
-    lines = [line for line in lines if line and not line.startswith("```")]
-    return next((line for line in reversed(lines) if line.endswith("?")), lines[-1] if lines else "reply needed")
+    """The ask to show for `text`, a message Jev says waits on the reader: its last question outside code
+    blocks, else "reply needed"."""
+    ask, code = "reply needed", False
+    for raw in text.splitlines():
+        line = raw.strip().strip("*_").strip()
+        if line.startswith("```"):
+            code = not code
+        elif line.endswith("?") and not code:
+            ask = line
+    return ask
 
 
 def jev_warning():
@@ -457,7 +428,7 @@ def jev_warning():
         try:
             with open(JEV_FAILED, encoding="utf-8") as handle:
                 why = "its last call failed: " + handle.read().strip()
-        except (OSError, ValueError):
+        except OSError:
             return ""
     else:
         why = "; ".join(["no usable TypeSafe key", *problems])
@@ -506,7 +477,10 @@ def hook(event):
                 f"you are {lead}, a lane lead. Follow the `herdr` skill's Lane leads section."
             )
         output = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
-        warning = jev_warning()
+        try:
+            warning = jev_warning()
+        except Exception:  # Jev is optional: it never costs the session its context
+            warning = ""
         if warning:
             output["systemMessage"] = warning
         print(json.dumps(output))
@@ -531,23 +505,18 @@ def hook(event):
         # returns, so Jev's answer can't land on the next turn.
         if not orchestrator():
             ensure_orchestrator()
+        if read(current_tab())[0] in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
+            return
+        text = payload.get("last_assistant_message")
+        text = text if isinstance(text, str) else ""
         try:
-            tab = current_tab()
-            before = read(tab)
-        except Exception:
-            tab, before = None, None
-        if before and before[0] not in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
-            text = last_assistant_text(payload)
             waiting = jev_says_waiting(text)
-            try:
-                if read(tab) != before:  # the label changed while Jev answered, a rename say; that label wins
-                    return
-            except Exception:
-                return
-            if waiting:
-                needs("question", ask_line(text))
-                return
-        set_status(DONE, clear_needs=False)
+        except Exception:  # Jev is optional: the turn still ends ✅
+            waiting = False
+        if waiting:
+            needs("question", ask_line(text))
+        else:
+            set_status(DONE, clear_needs=False)
 
 
 def main():

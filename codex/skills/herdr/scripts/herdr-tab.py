@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -13,8 +14,9 @@ WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
 SEPARATOR = " · "
 READY_LABEL = READY + " ready"
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
-# Why the last Jev call failed, until one succeeds. The Claude and Codex helpers share it.
-JEV_FAILED = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "herdr/jev-failed")
+JEV_CHARS = 1500
+STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+JEV_FAILED = os.path.join(STATE_HOME, "herdr/jev-failed")  # shared with the Claude helper
 SCRIPT = Path(__file__).resolve()
 SKILL = SCRIPT.parent.parent / "SKILL.md"
 REMINDER = (
@@ -262,7 +264,7 @@ def clear_when_done(approved_pane=None, approved_session=None):
         )
     if read(me["tab_id"])[0] in (QUESTION, REQUEST):
         raise RuntimeError("Resolve the pending ask before clearing this session")
-    log_dir = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "herdr-codex"
+    log_dir = Path(STATE_HOME) / "herdr-codex"
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / "clear.log").open("a") as log:
         subprocess.Popen(
@@ -290,7 +292,7 @@ def typesafe_key(problems=None):
                 jev = json.load(handle).get("jev", {})
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, AttributeError, RecursionError) as error:
+        except (OSError, ValueError, AttributeError) as error:
             problems.append(f"can't read {folder}/config.json ({type(error).__name__})")
         jev = jev if isinstance(jev, dict) else {}
         key = jev.get("api_key") if isinstance(jev.get("api_key"), str) else ""
@@ -318,18 +320,17 @@ def typesafe_key(problems=None):
 
 
 def jev_says_waiting(text, deadline=5):
-    """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last 1,500 characters, and
-    nothing without a TypeSafe key. Never raises, and gives up after `deadline` seconds: a failed or slow call
-    counts as no, and JEV_FAILED says why until a call succeeds. Keep this, ask_line and jev_warning identical
-    in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py compares them."""
+    """Whether Jev reads `text` as ending by waiting on the reader. Sends only its last JEV_CHARS characters,
+    and nothing without a TypeSafe key. A failed call, or one that takes over `deadline` seconds, counts as no,
+    and JEV_FAILED says why until a call succeeds. Keep this, ask_line and jev_warning identical in
+    claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py; tests/test_lanes.py compares them."""
     key = typesafe_key() if text.strip() else ""
     if not key:
         return False
-    import threading
     import urllib.request  # here, not at the top: most hook calls never reach Jev
 
     body = {
-        "state": text[-1500:],
+        "state": text[-JEV_CHARS:],
         "model": "jev-latest",
         "questions": {
             "waits_on_reader": {
@@ -351,13 +352,13 @@ def jev_says_waiting(text, deadline=5):
                 data=json.dumps(body).encode(),
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(request, timeout=4) as response:
+            with urllib.request.urlopen(request) as response:
                 answers.append(float(json.load(response)["answers"]["waits_on_reader"]["noul"]) >= 0.5)
         except Exception as error:
             answers.append(error)
 
-    # urlopen's timeout limits each connect and read, not a slow DNS lookup or trying addresses in turn. So
-    # the call runs in a daemon thread, and a call still running at the deadline ends with the hook.
+    # The deadline covers the whole call, a slow DNS lookup included, which urlopen's own timeout doesn't.
+    # A call still running when it passes ends with the hook, since the thread is a daemon.
     thread = threading.Thread(target=ask, daemon=True)
     thread.start()
     thread.join(deadline)
@@ -376,11 +377,16 @@ def jev_says_waiting(text, deadline=5):
 
 
 def ask_line(text):
-    """The ask to show for `text`, a message Jev says waits on the reader: the last question in the part Jev
-    saw, else its last line that isn't a code fence."""
-    lines = [line.strip().strip("*_").strip() for line in text[-1500:].splitlines()]
-    lines = [line for line in lines if line and not line.startswith("```")]
-    return next((line for line in reversed(lines) if line.endswith("?")), lines[-1] if lines else "reply needed")
+    """The ask to show for `text`, a message Jev says waits on the reader: its last question outside code
+    blocks, else "reply needed"."""
+    ask, code = "reply needed", False
+    for raw in text.splitlines():
+        line = raw.strip().strip("*_").strip()
+        if line.startswith("```"):
+            code = not code
+        elif line.endswith("?") and not code:
+            ask = line
+    return ask
 
 
 def jev_warning():
@@ -390,7 +396,7 @@ def jev_warning():
         try:
             with open(JEV_FAILED, encoding="utf-8") as handle:
                 why = "its last call failed: " + handle.read().strip()
-        except (OSError, ValueError):
+        except OSError:
             return ""
     else:
         why = "; ".join(["no usable TypeSafe key", *problems])
@@ -412,7 +418,10 @@ def hook(payload):
     if event == "SessionStart":
         mine, context = session_role()
         output["hookSpecificOutput"]["additionalContext"] += " " + context
-        warning = jev_warning()
+        try:
+            warning = jev_warning()
+        except Exception:  # Jev is optional: it never costs the session its context
+            warning = ""
         if warning:
             output["systemMessage"] = warning
         source = payload.get("source")
@@ -442,14 +451,13 @@ def hook(payload):
         # request_user_input_async returns before the human answers. Keep ❓.
     elif event == "Stop":
         # Codex runs this before it takes Kevin's next prompt, so Jev's answer can't land on the next turn.
-        tab = current_tab()
-        before = read(tab)
-        if before[0] not in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
+        if read(current_tab())[0] not in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
             text = payload.get("last_assistant_message")
             text = text if isinstance(text, str) else ""
-            waiting = jev_says_waiting(text)
-            if read(tab) != before:  # the label changed while Jev answered, a rename say; that label wins
-                return output
+            try:
+                waiting = jev_says_waiting(text)
+            except Exception:  # Jev is optional: the turn still ends ✅
+                waiting = False
             if waiting:
                 needs(QUESTION, ask_line(text))
             else:
