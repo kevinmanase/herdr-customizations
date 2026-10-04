@@ -68,6 +68,10 @@ match args:
         done({"tab": {"tab_id": tab, "label": label}})
     case ["tab", "list", *_]:
         done({"tabs": [{"tab_id": t, "label": label} for t, label in state["tabs"].items()]})
+    case ["tab", "close", tab]:
+        del state["tabs"][tab]
+        state["panes"] = [p for p in state["panes"] if p["tab_id"] != tab]
+        done({})
     case ["tab", "create", *rest]:
         tab = f"t{len(state['tabs']) + 1}"
         state["tabs"][tab] = rest[rest.index("--label") + 1]
