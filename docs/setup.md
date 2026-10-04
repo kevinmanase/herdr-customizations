@@ -17,7 +17,8 @@ cp -R codex/skills/herdr ~/.codex/skills/
 ```
 
 The skills refer to these exact paths, so keep them. To update, pull and
-copy again.
+copy again. If your Claude Stop hook entry still has `"async": true` from an
+earlier version, remove it (see below).
 
 ## Add the hooks
 
@@ -35,7 +36,8 @@ context.
 
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one
-turn can't land on the next. Each Jev call gives up after 5 seconds.
+turn can't land on the next. The hook marks the turn ✅ before it asks Jev, and
+its Jev call gives up after 5 seconds, or 1 while Jev keeps timing out.
 
 ## Add the TypeSafe key
 
@@ -49,9 +51,16 @@ private:
 chmod 600 ~/.config/team-floor/config.json
 ```
 
-To check it, start a new Claude or Codex session in a Herdr pane. If Jev can't
-run, because there's no usable key or its last call failed, the session opens
-with a Herdr message saying why.
+To check it, run this in a Herdr pane. It asks Jev once and says whether the
+Stop hook can use it:
+
+```sh
+~/.claude/hooks/herdr-tab check-jev
+```
+
+Run it again after you change the key. Until a call succeeds, sessions open
+with a Herdr message saying why Jev isn't working, and a session tells you once
+when Jev starts failing.
 
 ## Settings
 

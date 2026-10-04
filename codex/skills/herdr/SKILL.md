@@ -138,13 +138,8 @@ text asks yourself; a hook cannot reliably infer intent from prose.
 Jev: when nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier,
 whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with
 the message's last question as the ask. It's a safety net, not a reason to skip
-flagging: Jev can miss, and it can fail. It needs a TypeSafe key:
-`TYPESAFE_API_KEY`, `jev.api_key` in `~/.config/team-floor/config.json`, or the
-file named by `jev.api_key_file` there (by default `~/.config/typesafe/api-key`),
-checked in that order. Only the message's last 1,500 characters go to TypeSafe,
-and nothing goes without a key. When Jev can't run, the next session start tells
-Kevin why. The helper reads Codex's `last_assistant_message` field, not Claude
-transcripts.
+flagging: Jev can miss, and it can fail. Its key and what it sends are in
+`docs/setup.md` in the repo.
 
 ## Inspect tabs or start agents when Kevin asks
 

@@ -70,7 +70,8 @@ def herdr(tmp_path):
 
 @pytest.fixture
 def jev():
-    """A local stand-in for TypeSafe's endpoint. Set `reply` (a dict or an HTTP status); `requests` holds bodies."""
+    """A local stand-in for TypeSafe's endpoint. Set `reply` to a dict, an HTTP status, or a status and its headers;
+    `requests` holds the bodies, and `headers` the headers of every request, a followed redirect's GET included."""
 
     class Jev:
         reply = copy.deepcopy(JEV_CHOICE)
@@ -91,8 +92,11 @@ def jev():
             fake.headers.append(dict(self.headers))
             if fake.before_reply:
                 fake.before_reply()
-            if isinstance(fake.reply, int):
-                self.send_response(fake.reply)
+            if isinstance(fake.reply, (int, tuple)):
+                status, headers = fake.reply if isinstance(fake.reply, tuple) else (fake.reply, {})
+                self.send_response(status)
+                for name, value in headers.items():
+                    self.send_header(name, value)
                 self.end_headers()
                 return
             data = json.dumps(fake.reply).encode()
@@ -102,6 +106,11 @@ def jev():
             self.end_headers()
             self.wfile.write(data)
 
+        def do_GET(self):  # only a followed redirect comes here
+            fake.headers.append(dict(self.headers))
+            self.send_response(404)
+            self.end_headers()
+
         def log_message(self, *args):
             pass
 
@@ -110,3 +119,17 @@ def jev():
     fake.url = f"http://127.0.0.1:{server.server_port}/v1/systemone"
     yield fake
     server.shutdown()
+
+
+@pytest.fixture
+def env(monkeypatch):
+    """Set environment variables for helpers run in this process, after dropping the developer's own TypeSafe
+    key and state folder, so a test never reads or writes the real ones."""
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+
+    def set_env(**values):
+        for name, value in values.items():
+            monkeypatch.setenv(name, str(value))
+
+    return set_env

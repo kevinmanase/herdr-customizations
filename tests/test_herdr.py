@@ -2,6 +2,8 @@ import json
 import runpy
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 TAB = ROOT / "claude/hooks/herdr-tab"
 ORCHESTRATOR = ROOT / "claude/hooks/herdr-orchestrator"
@@ -46,6 +48,30 @@ def test_codex_helper_tells_kevin_from_peers():
     assert from_kevin({"prompt": "yes, ship it"})
     assert not from_kevin({"prompt": "Status from p3: done"})
     assert not from_kevin({"prompt": '<cross-session-message from="x">hi</cross-session-message>'})
+
+
+@pytest.mark.parametrize(
+    "source, before, after",
+    [
+        ("startup", "❓ merge now? · login fix", "✅ login fix"),  # a new session can't answer the old one's ask
+        ("resume", "⏳ login fix", "✅ login fix"),  # the last process ended mid-turn
+        ("resume", "❓ merge now? · login fix", "❓ merge now? · login fix"),  # still waiting on Kevin
+        ("compact", "⏳ login fix", "⏳ login fix"),  # compaction can come mid-turn
+        ("compact", "❓ merge now? · login fix", "❓ merge now? · login fix"),
+    ],
+)
+def test_session_start_clears_only_what_an_ended_session_left(herdr, source, before, after):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": before})
+    herdr.run(TAB, "hook", "session", stdin=json.dumps({"source": source}))
+    assert herdr.label() == after
+
+
+def test_an_ask_on_an_unnamed_tab_does_not_become_its_name(herdr):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "⏳"})
+    herdr.run(TAB, "ask", "which ticket?")
+    assert herdr.label() == "❓ which ticket?"
+    herdr.run(TAB, "hook", "prompt", stdin="{}")
+    assert herdr.label() == "⏳"
 
 
 def test_clear_resets_a_worker_to_ready(herdr):
