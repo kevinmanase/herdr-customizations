@@ -49,13 +49,13 @@ def stop(request, herdr, jev, env, monkeypatch, capsys):
     def run(message, event="Stop", **values):
         """Run the Stop hook on `message`, or with event="UserPromptSubmit" Kevin's prompt `message`."""
         values = {"TYPESAFE_API_URL": jev.url, **values}
+        text = {"last_assistant_message" if event == "Stop" else "prompt": message}
         if request.param == "claude":
-            payload = {"session_id": "s1", "last_assistant_message": message, "prompt": message}
-            return claude(herdr, "stop" if event == "Stop" else "prompt", payload, **values)
-        payload = {"hook_event_name": event, "session_id": "c1", "last_assistant_message": message, "prompt": message}
+            return claude(herdr, "stop" if event == "Stop" else "prompt", {"session_id": "s1", **text}, **values)
+        payload = {"hook_event_name": event, "session_id": "c1", **text}
         return codex(herdr, env, monkeypatch, capsys, payload, **values)
 
-    run.runtime = request.param
+    run.identity = "mine" if request.param == "claude" else "codex"  # the wire fixture's enrollment of s1 or c1
     return run
 
 
@@ -101,12 +101,11 @@ def test_jev_sees_only_the_last_1500_characters_and_the_tab_shows_the_question(s
 def test_a_detected_ask_shows_in_agent_wire_until_kevin_answers(stop, herdr, jev, wire):
     jev.reply = WAITING
     stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
-    identity = "mine" if stop.runtime == "claude" else "codex"
-    ask = wire.ask("--to", "Kevin", "--text", "Should I merge it now?", "--kind", "decide", identity=identity)
+    ask = wire.ask("--to", "Kevin", "--text", "Should I merge it now?", "--kind", "decide", identity=stop.identity)
     assert wire.calls == [ask]
     stop("yes", event="UserPromptSubmit")
     assert herdr.label() == "⏳ ready"
-    assert wire.calls == [ask, wire.ask("--clear", identity=identity)]
+    assert wire.calls == [ask, wire.ask("--clear", identity=stop.identity)]
 
 
 def test_the_turn_reads_done_before_jev_answers(stop, herdr, jev):
