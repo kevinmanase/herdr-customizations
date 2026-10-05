@@ -19,11 +19,14 @@ exits 0.
 
 Jev: when nothing is flagged, the Stop hook asks Jev whether the turn's last message waits on Kevin,
 so an ask the agent forgot to flag still shows. See jev_says_waiting() and jev_warning().
+
+Agent Wire: `ask` and `request` also set the session's Agent Wire ask, and Kevin's answer clears both. See wire_ask().
 """
 
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -32,6 +35,7 @@ import time
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
 READY_LABEL = READY + " ready"  # a cleared tab has no task, so no name
 NEEDS = {"question": QUESTION, "request": REQUEST}
+WIRE_KINDS = {"question": "decide", "request": "act"}
 SEPARATOR = " · "
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 ORCHESTRATOR = os.path.expanduser("~/.claude/hooks/herdr-orchestrator")
@@ -296,12 +300,61 @@ def from_kevin(payload):
 
 
 def set_status(status, clear_needs=True):
+    """Set the tab's status. Returns whether that cleared an ask."""
     tab = current_tab()
     current, ask, name = read(tab)
     if not clear_needs and current in (QUESTION, REQUEST):
-        return
+        return False
     if current != status:
         render(tab, status, "", name)
+    return current in (QUESTION, REQUEST)
+
+
+def wire_ask(runtime, session, text="", kind=""):
+    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act), or clear it (no `kind`).
+    The session is the enrollment whose identity file names `runtime` and the native `session` id, never a pane or
+    the focused tab. Without the agent-wire CLI or an enrollment it does nothing. Returns what failed, or "";
+    never raises. Keep this identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py."""
+    state = os.path.join(STATE_HOME, "agent-wire")
+    folder = os.path.join(state, "identities")
+    search = os.environ.get("PATH", "") + os.pathsep + os.path.expanduser("~/.local/bin")
+    command = shutil.which("agent-wire", path=search)
+    if not session or not command or not os.path.isdir(folder):
+        return ""
+    identities = []
+    for entry in os.scandir(folder):
+        try:
+            with open(entry.path, encoding="utf-8") as handle:
+                agent = json.load(handle)["agent"]
+            if (agent["runtime"], agent["native_id"]) == (runtime, session):
+                identities.append((entry.stat().st_mtime, entry.path))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    text = " ".join(text.split())[:120] or "needs you"
+    ask = ["--to", "Kevin", "--text", text, "--kind", kind] if kind else ["--clear"]
+    failed = ""
+    for _, identity in sorted(identities, reverse=True):  # newest first: a re-enrolled session's old one is retired
+        try:
+            result = subprocess.run(
+                [command, "--state", state, "ask", "--identity", identity, *ask],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            failed = f"Agent Wire ask failed: {error}"
+            continue
+        if result.returncode == 0:
+            return ""
+        failed = "Agent Wire ask failed: " + (result.stderr.strip() or f"exit {result.returncode}")
+    return failed
+
+
+def mirror(kind="", text=""):
+    """Mirror an explicit command's ask into Agent Wire: set it for `kind`, or clear it. Raises what failed."""
+    failed = wire_ask("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"), text, WIRE_KINDS.get(kind, ""))
+    if failed:
+        raise RuntimeError(failed)
 
 
 def set_name(name):
@@ -522,7 +575,8 @@ def hook(event):
         if not agent:
             ensure_orchestrator()
     elif event in ("prompt", "resume"):
-        set_status(WORKING, clear_needs=from_kevin(payload))
+        if set_status(WORKING, clear_needs=from_kevin(payload)):
+            wire_ask("claude", payload.get("session_id"))  # fails open, like every hook
     elif event == "question":
         needs("question", dialog_ask(payload))
     elif event == "notify":
@@ -556,13 +610,15 @@ def main():
     if os.environ.get("HERDR_ENV") != "1" or len(sys.argv) < 2:
         return
     command, args = sys.argv[1], sys.argv[2:]
+    if command == "status" and args[:1] == ["question"]:  # older spelling of `ask`
+        command, args = "ask", args[1:] or ["needs you"]
     if command in ("ask", "request") and args:
-        needs("question" if command == "ask" else "request", " ".join(args))
+        kind = "question" if command == "ask" else "request"
+        needs(kind, " ".join(args))
+        mirror(kind, " ".join(args))
     elif command == "status" and args:
-        if args[0] == "question":  # older spelling of `ask`
-            needs("question", " ".join(args[1:]) or "needs you")
-        elif args[0] in ("working", "done"):
-            set_status(WORKING if args[0] == "working" else DONE)
+        if args[0] in ("working", "done") and set_status(WORKING if args[0] == "working" else DONE):
+            mirror()
     elif command == "name" and args:
         set_name(" ".join(args))
     elif command == "clear":

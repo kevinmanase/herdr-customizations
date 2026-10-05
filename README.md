@@ -129,8 +129,9 @@ nothing leaves the machine.
 
 I use [Agent Wire](https://github.com/kevinmanase/agent-wire) for a shared work
 list and messages between Claude and Codex sessions. The orchestrator reads
-that list to see what each session reports. The labels and hooks work without
-it.
+that list to see what each session reports. `herdr-tab ask` and `request` also
+set the session's Agent Wire ask, and my answer clears both. The labels and
+hooks work without it.
 
 ## Development
 

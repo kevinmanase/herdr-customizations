@@ -59,6 +59,11 @@ secrets in a label or notification. An asynchronous question remains pending
 after the question tool returns; clear it when Kevin answers, not when it is sent.
 If work continues before the answer arrives, keep the question flag visible.
 
+With Agent Wire, `ask` and `request` also set this session's Agent Wire ask
+(kind `decide` or `act`), and the same answer from Kevin clears both, so do not
+set it again yourself. Flag after your last `session_update` of the turn: an
+update replaces the whole report, ask included.
+
 When finishing with nothing needed, run:
 
 ```bash

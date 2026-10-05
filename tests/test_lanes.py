@@ -573,6 +573,7 @@ def test_a_herdr_error_is_not_a_missing_lead(herdr):
         ("jev_says_waiting", HELPERS),
         ("ask_line", HELPERS),
         ("jev_warning", HELPERS),
+        ("wire_ask", HELPERS),
     ],
 )
 def test_the_shared_copies_are_identical(name, scripts):
