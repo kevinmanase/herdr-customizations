@@ -71,6 +71,14 @@ def test_a_new_worker_is_grouped_under_its_explicit_supervisor(herdr, queue, gro
     assert prompts(herdr, "task")
 
 
+def test_a_missing_grouping_cli_warns_once_and_starts_the_task(herdr, queue):
+    (queue / "01-task.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.count("herdr-groups is not on the PATH") == 1
+    assert prompts(herdr, "task")
+
+
 def test_a_grouping_failure_does_not_stop_the_queued_task(herdr, queue, grouping_cli):
     (queue / "01-task.md").write_text("Fix the login bug.")
     result = herdr.run(ORCHESTRATOR, "next", GROUPS_TEST_FAIL="1")
