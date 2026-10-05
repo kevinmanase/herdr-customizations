@@ -173,9 +173,9 @@ text asks yourself; a hook cannot reliably infer intent from prose.
 
 Jev: when nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier,
 whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with
-the message's last question as the ask. It's a safety net, not a reason to skip
-flagging: Jev can miss, and it can fail. Its key and what it sends are in
-`docs/setup.md` in the repo.
+the message's last question as the ask, and your Agent Wire ask gets the same
+text. It's a safety net, not a reason to skip flagging: Jev can miss, and it can
+fail. Its key and what it sends are in `docs/setup.md` in the repo.
 
 ## Inspect tabs or start agents when Kevin asks
 

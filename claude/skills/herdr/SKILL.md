@@ -68,7 +68,7 @@ Rename when you judge the old name has stopped describing the work: a new stage,
 
 ### Jev
 
-When nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with the message's last question as the ask. A 🧹 tab skips Jev. It's a safety net, not a reason to skip flagging: Jev can miss, and it can fail. Its key and what it sends are in `docs/setup.md` in the repo.
+When nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with the message's last question as the ask, and your Agent Wire ask gets the same text. A 🧹 tab skips Jev. It's a safety net, not a reason to skip flagging: Jev can miss, and it can fail. Its key and what it sends are in `docs/setup.md` in the repo.
 
 ## Finish; clear only with Kevin's approval
 

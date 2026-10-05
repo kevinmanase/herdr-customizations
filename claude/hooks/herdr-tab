@@ -595,7 +595,9 @@ def hook(event):
         text = payload.get("last_assistant_message") or ""
         failing = os.path.exists(JEV_FAILED)
         if jev_says_waiting(text) and read(tab)[0] == DONE:  # a prompt, /clear or ask that landed meanwhile wins
-            needs("question", ask_line(text))
+            ask = ask_line(text)
+            needs("question", ask)
+            wire_ask("claude", payload.get("session_id"), ask, "decide")  # Kevin's next prompt clears both
         if not failing and os.path.exists(JEV_FAILED):  # Jev just started failing: tell Kevin now, once
             print(json.dumps({"systemMessage": jev_warning()}))
 

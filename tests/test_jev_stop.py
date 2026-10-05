@@ -46,13 +46,16 @@ def codex(herdr, env, monkeypatch, capsys, payload, **values):
 def stop(request, herdr, jev, env, monkeypatch, capsys):
     """Run one helper's Stop hook on a message, and return the hook's JSON."""
 
-    def run(message, **values):
+    def run(message, event="Stop", **values):
+        """Run the Stop hook on `message`, or with event="UserPromptSubmit" Kevin's prompt `message`."""
         values = {"TYPESAFE_API_URL": jev.url, **values}
+        text = {"last_assistant_message" if event == "Stop" else "prompt": message}
         if request.param == "claude":
-            return claude(herdr, "stop", {"last_assistant_message": message}, **values)
-        payload = {"hook_event_name": "Stop", "last_assistant_message": message}
+            return claude(herdr, "stop" if event == "Stop" else "prompt", {"session_id": "s1", **text}, **values)
+        payload = {"hook_event_name": event, "session_id": "c1", **text}
         return codex(herdr, env, monkeypatch, capsys, payload, **values)
 
+    run.identity = "mine" if request.param == "claude" else "codex"  # the wire fixture's enrollment of s1 or c1
     return run
 
 
@@ -93,6 +96,16 @@ def test_jev_sees_only_the_last_1500_characters_and_the_tab_shows_the_question(s
     stop(message, TYPESAFE_API_KEY="test-key")
     assert jev.requests[0]["state"] == message[-1500:]
     assert herdr.label() == "❓ Should I run this on prod? · ready"
+
+
+def test_a_detected_ask_shows_in_agent_wire_until_kevin_answers(stop, herdr, jev, wire):
+    jev.reply = WAITING
+    stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
+    ask = wire.ask("--to", "Kevin", "--text", "Should I merge it now?", "--kind", "decide", identity=stop.identity)
+    assert wire.calls == [ask]
+    stop("yes", event="UserPromptSubmit")
+    assert herdr.label() == "⏳ ready"
+    assert wire.calls == [ask, wire.ask("--clear", identity=stop.identity)]
 
 
 def test_the_turn_reads_done_before_jev_answers(stop, herdr, jev):
