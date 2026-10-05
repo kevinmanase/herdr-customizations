@@ -75,7 +75,8 @@ keeping any row preferences you already have:
 rows = [["$herdr_groups_tree", "state_icon", "tab"]]
 ```
 
-Run `herdr server reload-config` and `herdr-groups root orchestrator`. Then run
+Run `herdr server reload-config`. From a Herdr pane with the orchestrator running,
+run `herdr-groups root orchestrator`, then
 `herdr-groups assign <worker> orchestrator` for each running worker (names:
 `herdr agent list`). `herdr-groups preview` shows the tree.
 
