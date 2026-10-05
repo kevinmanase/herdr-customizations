@@ -160,6 +160,8 @@ def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
 
 
 def test_peer_and_task_prompts_clear_neither(herdr, wire):
+    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
+    assert wire.calls == []  # nothing was flagged
     herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     for prompt in ("<task-notification>\n<status>completed</status>\n</task-notification>", "Status from p3: done"):
         herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": prompt}))

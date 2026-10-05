@@ -171,13 +171,14 @@ def from_kevin(payload):
 
 
 def set_status(status, clear_needs=False):
-    """Set the tab's status, keeping a pending ask unless `clear_needs`."""
+    """Set the tab's status. Returns whether that cleared an ask."""
     tab = current_tab()
     current, _, name = read(tab)
     if not clear_needs and current in (QUESTION, REQUEST):
-        return
+        return False
     if current != status:
         render(tab, status, "", name)
+    return current in (QUESTION, REQUEST)
 
 
 def wire_ask(runtime, session, text="", kind=""):
@@ -516,9 +517,7 @@ def hook(payload):
             render(current_tab(), READY, "", "👑 orchestrator" if mine else "")
         # Resume and compaction preserve the task and any pending ask.
     elif event == "UserPromptSubmit":
-        kevin = from_kevin(payload)
-        set_status(WORKING, clear_needs=kevin)
-        if kevin:  # whatever the tab showed: it may have lost the ask, or an earlier clear failed
+        if set_status(WORKING, clear_needs=from_kevin(payload)):
             wire_ask("codex", payload.get("session_id"))  # fails open, like every hook
     elif event == "PreToolUse" and tool_name(payload) in (
         "request_user_input",
