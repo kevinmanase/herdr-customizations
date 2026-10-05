@@ -374,10 +374,17 @@ def next_brief(*args):
     return 0
 
 
+GROUPS_WARNED = False
+
+
 def group_session(name, supervisor):
     """Record an explicit assignment when the optional sidebar grouping CLI is installed."""
+    global GROUPS_WARNED
     command = shutil.which("herdr-groups")
     if not command:
+        if not GROUPS_WARNED:
+            GROUPS_WARNED = True
+            print("fleet: herdr-groups is not on the PATH, so workers stay ungrouped (docs/setup.md)", file=sys.stderr)
         return False
     try:
         result = subprocess.run([command, "assign", name, supervisor], capture_output=True, text=True, timeout=10)

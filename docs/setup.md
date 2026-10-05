@@ -59,45 +59,48 @@ only 1 second.
 
 The [groups plugin](../plugins/agent-groups/README.md) nests each worker under
 its orchestrator in Herdr's Agents sidebar. `herdr-orchestrator next` and
-`leads` assign new workers only when `herdr-groups` is on the PATH, so install
-both:
+`leads` assign new workers only when `herdr-groups` is on the PATH, and warn
+when it isn't. Install both:
 
 ```sh
 herdr plugin install kevinmanase/herdr-customizations/plugins/agent-groups --yes
 install -m 755 plugins/agent-groups/groups.py ~/.local/bin/herdr-groups
 ```
 
-Running the plugin install again updates it and keeps the assignments. In
-`~/.config/herdr/config.toml`, add `$herdr_groups_tree` to the first row, and
-keep any row preferences you already have:
+In `~/.config/herdr/config.toml`, add `$herdr_groups_tree` to the first row,
+keeping any row preferences you already have:
 
 ```toml
 [ui.sidebar.agents]
 rows = [["$herdr_groups_tree", "state_icon", "tab"]]
 ```
 
-Run `herdr server reload-config` and `herdr-groups root orchestrator`. For each
-worker already running, run `herdr-groups assign <worker> orchestrator`;
-`herdr agent list` gives the names. `herdr-groups preview` shows the tree.
+Run `herdr server reload-config` and `herdr-groups root orchestrator`. Then run
+`herdr-groups assign <worker> orchestrator` for each running worker (names:
+`herdr agent list`). `herdr-groups preview` shows the tree.
 
 ## Check the install
 
-After a setup or an update, run this from the checkout. It prints nothing when
-every installed copy matches:
+After a setup or an update, run this from the checkout. No output means
+everything matches:
 
 ```sh
 cmp claude/hooks/herdr-tab ~/.claude/hooks/herdr-tab
 cmp claude/hooks/herdr-orchestrator ~/.claude/hooks/herdr-orchestrator
-diff -r claude/skills/herdr ~/.claude/skills/herdr
-diff -r codex/skills/herdr ~/.codex/skills/herdr
+diff -r -x __pycache__ claude/skills/herdr ~/.claude/skills/herdr
+diff -r -x __pycache__ codex/skills/herdr ~/.codex/skills/herdr
 cmp plugins/agent-groups/groups.py ~/.local/bin/herdr-groups
+grep -q herdr_groups_tree ~/.config/herdr/config.toml || echo "sidebar row missing"
+for pair in claude-hooks:.claude/settings.json codex-hooks:.codex/hooks.json; do
+  jq -r --slurpfile have ~/"${pair#*:}" '.hooks | to_entries[] | .key as $e
+    | .value[].hooks[].command | sub("/ABSOLUTE/HOME"; env.HOME) as $c
+    | select([$have[0].hooks[$e][]?.hooks[]?.command] | index([$c]) | not)
+    | "missing \($e) hook: \($c)"' "hooks/${pair%%:*}.example.json"
+done
 ```
 
-Then check three things by hand:
-
-- `herdr plugin list` shows `kevin.agent-groups` at this checkout's commit.
-- `~/.claude/settings.json` has every event from the Claude example.
-- `~/.codex/hooks.json` has every event from the Codex example.
+`herdr plugin list` should show `kevin.agent-groups` at the commit you pulled;
+if not, run its install again. That keeps the assignments.
 
 ## Add the TypeSafe key
 
