@@ -267,7 +267,7 @@ def test_routing_needs_the_lane_list(herdr, jev, queue):
 
 
 def test_a_bad_lane_id_is_skipped(herdr, jev, lanes, queue):
-    lanes.write_text(json.dumps({"lanes": [*LANES["lanes"], {"id": "unclear"}, {"id": "Bad Id"}]}))
+    lanes.write_text(json.dumps({"lanes": [*LANES["lanes"], {"id": "unclear"}, {"id": "misc"}, {"id": "Bad Id"}]}))
     brief = queue / "01-webhook-fix.md"
     brief.write_text("Fix it.")
     result = route(herdr, jev, brief)

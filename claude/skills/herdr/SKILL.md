@@ -143,7 +143,7 @@ or task label alone does not establish ownership.
 Holding every lane's detail in one context fills the orchestrator up. So a busy lane gets its own lead, and the orchestrator keeps one line per lane.
 
 - **Lanes:** a fixed list in `~/.config/team-floor/lanes.json`, which the team floor reads too:
-  `{"lanes": [{"id": "api", "name": "API", "about": "Server endpoints, webhooks, database"}]}`. Ids are lowercase, up to 27 characters, and never `unclear` or `started`. Without the file there are no lanes, and everything works as before.
+  `{"lanes": [{"id": "api", "name": "API", "about": "Server endpoints, webhooks, database"}]}`. Ids are lowercase, up to 27 characters, and never `unclear`, `started` or `misc`. Without the file there are no lanes, and everything works as before.
 - **Routing:** `herdr-orchestrator route <brief>` asks Jev which lane the brief belongs to, as a `choice` over the lane ids plus `unclear`. It sends at most the brief's last 1,500 characters, plus the lane names and descriptions. It prints the lane, the probability and the rule it applied:
   - probability 0.60 or more: moves the brief to `~/.cache/herdr-fleet/queue/<lane>/`;
   - 0.40 up to 0.60: moves it, and starts it with a "Lane to confirm" line;
