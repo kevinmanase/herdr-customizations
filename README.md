@@ -1,15 +1,19 @@
 # Herdr customizations
 
-**One orchestrator. Named workers. Questions that stay visible.**
+**Named supervisors. Workers beneath them. Questions that stay visible.**
 
 My tab naming and orchestrator setup for [Herdr](https://github.com/herdrdev/herdr),
 packaged as skills, small Python helpers, and lifecycle hooks for Claude Code
 and Codex. The agents keep their native tools and sessions. The labels help me
 see what they are doing and which ones need me.
 
+The optional [orchestrator groups plugin](plugins/agent-groups/README.md) puts
+each named supervisor above its workers in the Agents sidebar, with indentation
+for workers and nested leads. It supports several top-level supervisors.
+
 I mainly talk to one orchestrator. It coordinates the workers and brings
-decisions back to me. I reserve the crown for that agent so it is easy to
-find in a busy workspace.
+decisions back to me. The crown makes supervisors easy to find in a busy
+workspace.
 
 ## What it looks like
 
@@ -66,9 +70,9 @@ Claude `SessionStart` hook tells every session to name its tab and how,
 and each prompt carries a one-line reminder to flag asks before stopping.
 The Codex helper does the same through its hook output.
 
-## One orchestrator
+## The shared orchestrator
 
-Exactly one Claude session is the orchestrator. Its Herdr agent is named
+One Claude or Codex session owns the shared orchestrator role. Its Herdr agent is named
 `orchestrator` and its tab reads `👑 orchestrator`. Its session hook tells it
 the role, and tells every other session to report to it.
 

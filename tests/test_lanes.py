@@ -8,6 +8,8 @@ docs.typesafe.ai (quick start and API reference): answers.<question> holds `type
 import inspect
 import json
 import runpy
+import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -39,6 +41,99 @@ def queue(tmp_path):
     folder = tmp_path / "queue"
     folder.mkdir()
     return folder
+
+
+@pytest.fixture
+def grouping_cli(herdr, tmp_path):
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    log = tmp_path / "groups-calls.jsonl"
+    command = folder / "herdr-groups"
+    command.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"with open({str(log)!r}, 'a') as output: output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if os.environ.get('GROUPS_TEST_FAIL'): sys.stderr.write('grouping unavailable'); sys.exit(1)\n"
+    )
+    command.chmod(0o755)
+    herdr.environ["PATH"] = f"{folder}:{herdr.environ['PATH']}"
+    return log
+
+
+@pytest.mark.parametrize("lane,supervisor", [(None, "orchestrator"), ("api", "lead-api")])
+def test_a_new_worker_is_grouped_under_its_explicit_supervisor(herdr, queue, grouping_cli, lane, supervisor):
+    folder = queue / lane if lane else queue
+    folder.mkdir(exist_ok=True)
+    (folder / "01-task.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next", *(["--lane", lane] if lane else []))
+    assert result.returncode == 0, result.stderr
+    assert json.loads(grouping_cli.read_text()) == ["assign", "task", supervisor]
+    assert prompts(herdr, "task")
+
+
+def test_a_grouping_failure_does_not_stop_the_queued_task(herdr, queue, grouping_cli):
+    (queue / "01-task.md").write_text("Fix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next", GROUPS_TEST_FAIL="1")
+    assert result.returncode == 0, result.stderr
+    assert "grouping task failed: grouping unavailable" in result.stderr
+    assert prompts(herdr, "task")
+    assert (queue / "started/01-task.md").exists()
+
+
+def test_a_new_lead_groups_the_lanes_existing_workers(herdr, lanes, queue, grouping_cli):
+    (queue / "api/started").mkdir(parents=True)
+    (queue / "api/started/01-worker.md").write_text("Already started.")
+    for index in range(2, 5):
+        (queue / f"api/{index:02d}-task-{index}.md").write_text("Queued.")
+    herdr.set_state(
+        tabs={**herdr.state["tabs"], "t2": "⏳ worker"},
+        agents={**herdr.state["agents"], "worker": {"pane_id": "p2", "tab_id": "t2"}},
+        panes=[*herdr.state["panes"], {"pane_id": "p2", "tab_id": "t2", "agent": "claude"}],
+    )
+    result = herdr.run(ORCHESTRATOR, "leads")
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in grouping_cli.read_text().splitlines()] == [
+        ["assign", "lead-api", "orchestrator"],
+        ["assign", "worker", "lead-api"],
+    ]
+
+
+def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(monkeypatch, tmp_path, capsys):
+    start = runpy.run_path(str(ORCHESTRATOR))["start_lead"]
+    calls = []
+    for name, value in {
+        "QUEUE": str(tmp_path),
+        "locked": lambda *args: nullcontext(),
+        "agent_named": lambda *args: None,
+        "lost_lead": lambda *args: None,
+        "start_session": lambda *args: "p2",
+        "group_session": lambda *args: True,
+        "herdr": lambda *args: calls.append(args),
+    }.items():
+        monkeypatch.setitem(start.__globals__, name, value)
+
+    def unavailable(*args):
+        raise RuntimeError("agent list unavailable")
+
+    monkeypatch.setitem(start.__globals__, "lane_items", unavailable)
+    assert start(LANES["lanes"][0]) == "started lead-api in pane p2"
+    assert calls[0][:3] == ("agent", "prompt", "lead-api")
+    assert "You are lead-api" in calls[0][3]
+    assert "workers failed: agent list unavailable" in capsys.readouterr().err
+
+
+def test_handback_groups_the_remaining_worker_under_the_orchestrator(herdr, lanes, queue, grouping_cli):
+    be_lead(herdr)
+    (queue / "api/started").mkdir(parents=True)
+    (queue / "api/started/01-worker.md").write_text("Already started.")
+    herdr.set_state(
+        tabs={**herdr.state["tabs"], "t2": "⏳ worker"},
+        agents={**herdr.state["agents"], "worker": {"pane_id": "p2", "tab_id": "t2"}},
+        panes=[*herdr.state["panes"], {"pane_id": "p2", "tab_id": "t2", "agent": "claude"}],
+    )
+    result = herdr.run(ORCHESTRATOR, "handback", "api")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(grouping_cli.read_text()) == ["assign", "worker", "orchestrator"]
 
 
 def route(herdr, jev, brief, key="test-key"):

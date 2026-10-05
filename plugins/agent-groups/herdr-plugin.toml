@@ -1,0 +1,45 @@
+id = "kevin.agent-groups"
+name = "Orchestrator groups"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Keep each named orchestrator above the agents it supervises."
+platforms = ["linux", "macos"]
+
+[[startup]]
+command = ["python3", "groups.py", "sync"]
+
+[[actions]]
+id = "sync"
+title = "Group agents by orchestrator"
+contexts = ["pane", "workspace"]
+command = ["python3", "groups.py", "sync"]
+
+[[actions]]
+id = "clear"
+title = "Clear orchestrator groups"
+contexts = ["pane", "workspace"]
+command = ["python3", "groups.py", "clear"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["python3", "groups.py", "refresh"]
+
+[[events]]
+on = "pane.closed"
+command = ["python3", "groups.py", "refresh"]
+
+[[events]]
+on = "pane.moved"
+command = ["python3", "groups.py", "refresh"]
+
+[[events]]
+on = "pane.exited"
+command = ["python3", "groups.py", "refresh"]
+
+[[events]]
+on = "tab.renamed"
+command = ["python3", "groups.py", "refresh"]
+
+[[events]]
+on = "tab.moved"
+command = ["python3", "groups.py", "refresh"]
