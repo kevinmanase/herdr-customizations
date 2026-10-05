@@ -65,8 +65,10 @@ herdr-groups assign agent-wire tooling
 `herdr agent rename <pane-id> <name>`. A launcher can run `assign` after it
 starts a worker. The shared orchestrator's automatic recovery still owns its
 single named role; these display groups can include other named supervisors.
-After manually changing a Herdr agent name, run `herdr-groups sync` to update
-the grouping immediately.
+After manually claiming or naming a supervisor, register it with `root` or
+`assign`; assign any known workers beneath it too. `sync` refreshes existing
+assignments after a rename, but does not create ownership for a new name.
+Preserve an existing assignment unless ownership changes.
 
 Assignments live in the plugin's user config directory as `groups.json`:
 

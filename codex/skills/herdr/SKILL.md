@@ -19,7 +19,7 @@ Use the bundled [herdr-tab helper](scripts/herdr-tab.py). The commands below use
 the default install path; if the skill lives elsewhere, resolve the script beside
 this `SKILL.md`.
 
-At the start of a user turn, set working status. Once you know the task, name it:
+When Kevin starts a user turn, set working status and name the task before task work:
 
 ```bash
 python3 ~/.codex/skills/herdr/scripts/herdr-tab.py status working
@@ -31,6 +31,11 @@ Preserve Kevin's own wording when it still fits. Rename when the stage or focus
 changes, not for each tool call. Stage emoji: 🔍 investigating, 🛠️ building,
 🧪 testing, 👀 reviewing, 🚀 PR open, 🎉 merged, 🚧 blocked, 💥 failing, 💤 parked.
 Reserve 👑 for the shared orchestrator.
+
+For example, run `name "🛠️ login fix"` when building, `name "🧪 login fix"`
+when testing, `name "👀 login fix"` when reviewing, and `name "🚀 login fix"`
+once its PR is open, using the same helper path above. Naming also preserves a
+pending question or action.
 
 | First emoji | Meaning |
 | --- | --- |
@@ -64,7 +69,20 @@ python3 ~/.codex/skills/herdr/scripts/herdr-tab.py status done
 responds or the request is resolved. The prompt hook clears it only for Kevin's
 own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
 The helper resolves the pane's current tab so a moved pane does not rename its
-old tab. It does not start other agents.
+old tab. Hooks and explicit label commands first verify the foreground Codex
+process against Herdr's pane process list. Inherited pane IDs and the focused
+tab are never sufficient. An ambiguous match or an app-server session gets no
+label writes; explicit commands report the missing binding. Root session and
+prompt hooks still explain that limitation. Subagent hooks do not adopt the
+parent tab; subagents must leave the parent's labels to its owning agent. The
+helper does not start other agents.
+
+When `herdr-groups` is installed, record ownership with exact Herdr agent names:
+`herdr-groups root <name>` for a new top-level supervisor,
+`herdr-groups assign <lead> <parent>` for a delegated lead, and
+`herdr-groups assign <worker> <supervisor>` when explicitly dispatching or
+adopting a worker. Preserve known manual assignments unless Kevin changes
+ownership. Never infer ownership from tab labels, working directories, or tasks.
 
 ## Finish; clear only with Kevin's approval
 
