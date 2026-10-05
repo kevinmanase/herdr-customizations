@@ -140,3 +140,60 @@ def test_codex_helper_keeps_an_ask_until_working(herdr, env, monkeypatch):
     assert herdr.label() == "❓ ship today? · 🛠️ login fix"
     run("status", "working")
     assert herdr.label() == "⏳ 🛠️ login fix"
+
+
+def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
+    herdr.run(TAB, "name", "🔍 login bug")
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 0, result.stderr
+    assert herdr.label() == "❓ ship today? · 🔍 login bug"
+    assert wire.calls == [wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide")]
+    herdr.run(TAB, "request", "log in", CLAUDE_CODE_SESSION_ID="s1")
+    assert wire.calls[-1] == wire.ask("--to", "Kevin", "--text", "log in", "--kind", "act")
+    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "done"}))
+    assert herdr.label() == "⏳ 🔍 login bug"
+    assert wire.calls[-1] == wire.ask("--clear")
+    herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    herdr.run(TAB, "hook", "resume", stdin=json.dumps({"session_id": "s1", "tool_name": "AskUserQuestion"}))
+    assert wire.calls[-1] == wire.ask("--clear")
+    assert len(wire.calls) == 5
+
+
+def test_peer_and_task_prompts_clear_neither(herdr, wire):
+    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
+    assert wire.calls == []  # nothing was flagged
+    herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    for prompt in ("<task-notification>\n<status>completed</status>\n</task-notification>", "Status from p3: done"):
+        herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": prompt}))
+    assert herdr.label() == "❓ ship today? · ready"
+    assert len(wire.calls) == 1
+
+
+def test_without_agent_wire_only_the_tab_changes(herdr):
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 0, result.stderr
+    assert herdr.label() == "❓ ship today? · ready"
+
+
+def test_an_unenrolled_session_only_changes_the_tab(herdr, wire):
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s9")
+    assert result.returncode == 0, result.stderr
+    assert wire.calls == []
+
+
+def test_an_agent_wire_without_ask_counts_as_none(herdr, wire):
+    wire.old()
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert herdr.label() == "❓ ship today? · ready"
+
+
+def test_a_failed_mirror_still_flags_the_tab_and_the_command_says_so(herdr, wire):
+    wire.fail()
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 1
+    assert "no_report" in result.stderr
+    assert herdr.label() == "❓ ship today? · ready"
+    result = herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "yes"}))
+    assert result.returncode == 0  # hooks fail open
+    assert herdr.label() == "⏳ ready"

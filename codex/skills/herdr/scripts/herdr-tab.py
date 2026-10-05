@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -169,12 +170,56 @@ def from_kevin(payload):
 
 
 def set_status(status, clear_needs=False):
+    """Set the tab's status. Returns whether that cleared an ask."""
     tab = current_tab()
     current, _, name = read(tab)
     if not clear_needs and current in (QUESTION, REQUEST):
-        return
+        return False
     if current != status:
         render(tab, status, "", name)
+    return current in (QUESTION, REQUEST)
+
+
+def wire_ask(runtime, session, text="", kind=""):
+    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act), or clear it (no `kind`).
+    The session is the enrollment whose identity file names `runtime` and the native `session` id, never a pane or
+    the focused tab. Without the agent-wire CLI, one that predates `ask`, or an enrollment, it does nothing. Returns
+    what failed, or ""; never raises. Keep this identical in claude/hooks/herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py."""
+    state = os.path.join(STATE_HOME, "agent-wire")
+    folder = os.path.join(state, "identities")
+    search = os.environ.get("PATH", "") + os.pathsep + os.path.expanduser("~/.local/bin")
+    command = shutil.which("agent-wire", path=search)
+    if not session or not command or not os.path.isdir(folder):
+        return ""
+    newest = (0, "")  # a re-enrolled session's older identities are retired
+    for entry in os.scandir(folder):
+        try:
+            with open(entry.path, encoding="utf-8") as handle:
+                agent = json.load(handle)["agent"]
+            if (agent["runtime"], agent["native_id"]) == (runtime, session):
+                newest = max(newest, (entry.stat().st_mtime, entry.path))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    if not newest[1]:
+        return ""
+    ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
+    try:
+        result = subprocess.run(
+            [command, "--state", state, "ask", "--identity", newest[1], *ask], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"Agent Wire ask failed: {error}"
+    if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
+        return ""
+    return "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
+
+
+def mirror(kind="", text=""):
+    """Mirror an explicit command's ask into Agent Wire: set it as `kind`, or clear it. Raises what failed."""
+    failed = wire_ask("codex", os.environ.get("CODEX_THREAD_ID"), text, kind)
+    if failed:
+        raise RuntimeError(failed)
 
 
 def set_name(name):
@@ -471,7 +516,8 @@ def hook(payload):
             render(current_tab(), READY, "", "👑 orchestrator" if mine else "")
         # Resume and compaction preserve the task and any pending ask.
     elif event == "UserPromptSubmit":
-        set_status(WORKING, clear_needs=from_kevin(payload))
+        if set_status(WORKING, clear_needs=from_kevin(payload)):
+            wire_ask("codex", payload.get("session_id"))  # fails open, like every hook
     elif event == "PreToolUse" and tool_name(payload) in (
         "request_user_input",
         "request_user_input_async",
@@ -488,6 +534,7 @@ def hook(payload):
             status == REQUEST and ask == permission_ask(payload)
         ):
             render(tab, WORKING, "", task)
+            wire_ask("codex", payload.get("session_id"))
         # request_user_input_async returns before the human answers. Keep ❓.
     elif event == "Stop":
         # Codex runs this before it takes Kevin's next prompt, so Jev's answer can't land on the next turn.
@@ -542,15 +589,17 @@ def main():
         elif args.command == "name":
             set_name(" ".join(args.text))
         elif args.command in ("ask", "request"):
-            needs(QUESTION if args.command == "ask" else REQUEST, " ".join(args.text))
+            text = " ".join(args.text)
+            needs(QUESTION if args.command == "ask" else REQUEST, text)
+            mirror("decide" if args.command == "ask" else "act", text)
         elif args.command == "clear":
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":
             clear_idle(args.pane, args.session, args.terminal)
         elif args.state == "ready":
             render(current_tab(), READY, "", "")
-        else:
-            set_status(WORKING if args.state == "working" else DONE, clear_needs=args.state == "working")
+        elif set_status(WORKING if args.state == "working" else DONE, clear_needs=args.state == "working"):
+            mirror()
     except Exception as error:
         print(f"herdr-tab: {error}", file=sys.stderr)
         if args.command != "hook":

@@ -80,5 +80,7 @@ a weak pick, `unclear`, or no Jev leaves the brief unrouted and flags Kevin.
 with 4 or more open items. A lead hands a lane with 1 open item back with
 `herdr-orchestrator handback <lane>`, and its conversation stays open. With
 Agent Wire, start the task text with `role: main` as the orchestrator, or
-`role: lead lane: <id>` as a lead. The Claude skill's "Lanes and leads"
+`role: lead lane: <id>` as a lead. Write `ticket` as the Linear key (`ENG-2649`),
+or as `<repo>#<number>` for the GitHub issue, or for the PR when there is no
+issue, and nothing else. The Claude skill's "Lanes and leads"
 section has the full rules.

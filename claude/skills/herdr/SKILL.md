@@ -36,6 +36,8 @@ A hook can't reliably tell when a plain-text reply waits on Kevin: Jev (below) c
 
 Flagging puts the ask in the tab's label, for example `❓ merge the PR now, or after your phone check? · 🚀 login fix PR open`, and pops a Herdr notification. The Stop hook keeps the flag. Kevin's next message, or his answer to a dialog, clears it and turns the tab back to ⏳. A peer's message (`<cross-session-message …>` or `Status from …`) or a background task's `<task-notification>` leaves it. Write the ask so he can act on it from the tab strip alone. Use `ask` when he has to reply, and `request` when he has to do something outside this conversation.
 
+With Agent Wire, `ask` and `request` also set your session's Agent Wire ask (kind `decide` or `act`), and the same answer from Kevin clears both, so don't set it again yourself. Flag after your last `session_update` of the turn: an update replaces your whole report, ask included.
+
 ### Name: everything after the status
 
 You own the name. Set it as soon as you understand the task well enough to say it in a few words:
@@ -144,7 +146,7 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged or 💤 parked. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It starts the lead without holding the queue, and never starts a second one, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back. If `lanes.json` can't be read, `route` and `leads` report it, and `next` still runs the main queue.
 - **Your view:** keep one line per lane. When Kevin asks about a led lane, ask its lead over Agent Wire (or SendMessage `lead-<lane>`) instead of reading its sessions yourself. `next` skips a lane that has a lead.
 - **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back; if the lane gets busy again first, it asks afresh next time. The lead runs `herdr-orchestrator handback <lane>`, which drops its `lead-<lane>` name, renames its tab `💤 ex-lead-<lane>` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
-- **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.)
+- **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.) Write `ticket` as the Linear key (`ENG-2649`), or as `<repo>#<number>` for the GitHub issue, or for the PR when there is no issue (`team-floor#14`). Nothing else goes in it.
 
 ### If you are a lane lead
 

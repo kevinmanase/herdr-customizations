@@ -1,6 +1,8 @@
 import copy
 import http.server
 import json
+import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -10,6 +12,7 @@ import pytest
 
 TESTS = Path(__file__).resolve().parent
 FAKE = TESTS / "fake_herdr.py"
+FAKE_WIRE = TESTS / "fake_agent_wire.py"
 JEV_CHOICE = json.loads((TESTS / "fixtures/jev-choice.json").read_text())
 
 
@@ -66,6 +69,42 @@ def herdr(tmp_path):
             state.write_text(json.dumps({**self.state, **changes}))
 
     return Herdr()
+
+
+@pytest.fixture
+def wire(tmp_path):
+    """A fake agent-wire CLI in ~/.local/bin, with Claude session s1 and Codex thread c1 enrolled beside another
+    session. `calls` lists its argument lists, `ask()` builds one, `fail()` makes every call fail, and `old()` makes
+    it a release without the `ask` command."""
+    folder = tmp_path / ".local/bin"
+    folder.mkdir(parents=True)
+    shutil.copy(FAKE_WIRE, folder / "agent-wire")
+    identities = tmp_path / ".local/state/agent-wire/identities"
+    identities.mkdir(parents=True)
+    for name, runtime, native in (("mine", "claude", "s1"), ("codex", "codex", "c1"), ("other", "claude", "s2")):
+        identity = {"agent": {"id": name, "runtime": runtime, "native_id": native}, "session_handle": "secret"}
+        (identities / f"{name}.json").write_text(json.dumps(identity))
+    retired = identities / "retired.json"  # s1's older enrollment: only the newest is used
+    retired.write_text((identities / "mine.json").read_text().replace('"mine"', '"retired"'))
+    os.utime(retired, (0, 0))
+
+    class Wire:
+        def ask(self, *ask, identity="mine"):
+            state = str(tmp_path / ".local/state/agent-wire")
+            return ["--state", state, "ask", "--identity", str(identities / f"{identity}.json"), *ask]
+
+        @property
+        def calls(self):
+            log = folder / "calls.jsonl"
+            return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+        def fail(self):
+            (folder / "fail").touch()
+
+        def old(self):
+            (folder / "old").touch()
+
+    return Wire()
 
 
 @pytest.fixture
