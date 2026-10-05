@@ -2,7 +2,11 @@
 
 import importlib.util
 import json
+import socket
 import sys
+import tempfile
+import threading
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
@@ -34,7 +38,6 @@ class FakeCall:
         self.tabs = [{"tab_id": item["tab_id"], "label": f"❓ approve? · {item['name']}"} for item in agents]
         self.view = deepcopy(view)
         self.calls = []
-        self.closed = False
 
     def __call__(self, method, params):
         self.calls.append((method, deepcopy(params)))
@@ -67,11 +70,6 @@ class FakeCall:
                 self.view = None
             return {"type": "agent_view", "active": self.view is not None}
         raise AssertionError(f"Unexpected API effect: {method}")
-
-    call = __call__
-
-    def close(self):
-        self.closed = True
 
     @property
     def writes(self):
@@ -321,7 +319,7 @@ def cli(groups, monkeypatch, tmp_path):
         monkeypatch.setenv("HERDR_ENV", "1")
         monkeypatch.setenv("HERDR_SOCKET_PATH", "/fake.herdr.sock")
         monkeypatch.setattr(sys, "argv", [str(PLUGIN), "--config", str(path), *args])
-        monkeypatch.setattr(groups, "Client", lambda socket_path: call)
+        monkeypatch.setattr(groups, "request", call)
         return path, call
 
     return prepare
@@ -347,7 +345,6 @@ def test_rejected_cli_assignments_do_not_save_configuration(groups, cli, args, p
     assert path.read_bytes() == original
     assert not path.with_suffix(".tmp").exists()
     assert call.writes == []
-    assert call.closed
 
 
 def test_cli_assign_resolves_exact_names_before_saving(groups, cli):
@@ -361,7 +358,6 @@ def test_cli_assign_resolves_exact_names_before_saving(groups, cli):
         ("agent.get", {"target": "root"}),
     ]
     assert call.calls[:2] == [("agent.get", {"target": "worker"}), ("agent.get", {"target": "root"})]
-    assert call.closed
 
 
 @pytest.mark.parametrize("args", [["root", "absent"], ["assign", "worker", "absent"]])
@@ -374,7 +370,6 @@ def test_cli_rejects_a_name_that_is_not_a_live_agent(groups, cli, args):
 
     assert path.read_bytes() == original
     assert call.writes == []
-    assert call.closed
 
 
 def test_refresh_clears_group_metadata_from_an_agent_that_has_exited(groups):
@@ -426,3 +421,86 @@ def test_a_later_occupant_cannot_inherit_the_exited_agents_group(groups):
     ]
     assert new_occupant["tokens"] == {"summary": "shared pane metadata"}
     assert call.writes == []
+
+
+@pytest.fixture
+def socket_server(monkeypatch):
+    @contextmanager
+    def serve(respond, count):
+        # macOS limits Unix socket paths to 104 bytes; keep this independent of pytest's longer temp paths.
+        with tempfile.TemporaryDirectory(prefix="groups-socket-", dir="/tmp") as folder:
+            path = str(Path(folder) / "api.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(path)
+                listener.listen()
+                listener.settimeout(2)
+                requests = []
+                errors = []
+
+                def handle():
+                    try:
+                        for _ in range(count):
+                            connection, _ = listener.accept()
+                            with connection:
+                                connection.settimeout(2)
+                                with connection.makefile("rb") as reader:
+                                    request = json.loads(reader.readline())
+                                    requests.append(request)
+                                    connection.sendall(respond(request))
+                            # Herdr handles one request and then closes this connection.
+                    except Exception as error:
+                        errors.append(error)
+
+                thread = threading.Thread(target=handle, daemon=True)
+                thread.start()
+                monkeypatch.setenv("HERDR_SOCKET_PATH", path)
+                try:
+                    yield requests
+                finally:
+                    thread.join(timeout=3)
+                    assert not thread.is_alive(), "fake socket server did not stop"
+                    if errors:
+                        raise AssertionError("fake socket server failed") from errors[0]
+
+    return serve
+
+
+def test_sync_opens_a_new_connection_for_every_api_request(groups, socket_server):
+    call = FakeCall([agent("root", 1), agent("worker", 2)])
+
+    def respond(request):
+        result = call(request["method"], request["params"])
+        return json.dumps({"id": request["id"], "result": result}).encode() + b"\n"
+
+    with socket_server(respond, count=4) as requests:
+        ordered, labels = groups.sync(groups.request, {"root": None, "worker": "root"})
+
+    assert [request["method"] for request in requests] == [
+        "session.snapshot",
+        "pane.report_metadata",
+        "pane.report_metadata",
+        "agent.view.set",
+    ]
+    assert [(item["name"], depth, supervisor) for item, depth, supervisor in ordered] == [
+        ("root", 0, True),
+        ("worker", 1, False),
+    ]
+    assert labels == {"w1:t1": "❓ approve? · root", "w1:t2": "❓ approve? · worker"}
+    assert call.agents[0]["tokens"] == {ORDER: "00000000", TREE: "👑"}
+    assert call.agents[1]["tokens"] == {ORDER: "00000001", TREE: "│   └─"}
+    assert call.view["source"] == SOURCE
+
+
+def test_request_rejects_a_response_without_its_newline(groups, socket_server):
+    with socket_server(lambda request: b'{"result":{"type":"ok"}}', count=1):
+        with pytest.raises(RuntimeError, match="incomplete response"):
+            groups.request("session.snapshot", {})
+
+
+def test_request_reports_api_errors(groups, socket_server):
+    def respond(request):
+        return json.dumps({"id": request["id"], "error": {"message": "agent not found"}}).encode() + b"\n"
+
+    with socket_server(respond, count=1):
+        with pytest.raises(RuntimeError, match="agent.get: agent not found"):
+            groups.request("agent.get", {"target": "absent"})

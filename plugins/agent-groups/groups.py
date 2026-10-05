@@ -90,27 +90,20 @@ def sync(call, parents, activate=True):
     return ordered, {tab["tab_id"]: tab["label"] for tab in snapshot["tabs"]}
 
 
-class Client:
-    def __init__(self, path):
-        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.socket.settimeout(5)
-        self.socket.connect(path)
-        self.reader = self.socket.makefile("rb")
-
-    def call(self, method, params):
-        request = {"id": "agent-groups", "method": method, "params": params}
-        self.socket.sendall(json.dumps(request).encode() + b"\n")
-        line = self.reader.readline(8 * 1024 * 1024)
+def request(method, params):
+    # Herdr serves one request per connection, except for event subscriptions.
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(5)
+        stream.connect(os.environ["HERDR_SOCKET_PATH"])
+        stream.sendall(json.dumps({"id": "agent-groups", "method": method, "params": params}).encode() + b"\n")
+        with stream.makefile("rb") as reader:
+            line = reader.readline(8 * 1024 * 1024)
         if not line.endswith(b"\n"):
             raise RuntimeError("Herdr returned an incomplete response")
         response = json.loads(line)
         if "error" in response:
             raise RuntimeError(f"{method}: {response['error']['message']}")
         return response["result"]
-
-    def close(self):
-        self.reader.close()
-        self.socket.close()
 
 
 def main():
@@ -133,45 +126,41 @@ def main():
     )
     path = args.config or config_dir / "groups.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    client = Client(os.environ["HERDR_SOCKET_PATH"])
-    try:
-        # fcntl is available on both supported platforms. Serialize concurrent event hooks and assignments.
-        with path.with_suffix(".lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            parents = json.loads(path.read_text()) if path.exists() else {}
-            validate(parents)
-            if args.command in {"root", "assign"}:
-                # Resolve the exact names before saving an assignment; never infer ownership from a task label.
-                for name in [args.agent] + ([args.supervisor] if args.command == "assign" else []):
-                    if not NAME.fullmatch(name):
-                        raise ValueError(f"invalid agent name: {name}")
-                    client.call("agent.get", {"target": name})
-                if args.command == "assign":
-                    parents.setdefault(args.supervisor, None)
-                parents[args.agent] = args.supervisor if args.command == "assign" else None
-            elif args.command == "remove":
-                parents.pop(args.agent, None)
-                for name, parent in list(parents.items()):
-                    if parent == args.agent:
-                        parents[name] = None
-            elif args.command == "clear":
-                parents = {}
-            validate(parents)
-            if args.command in {"root", "assign", "remove", "clear"}:
-                temporary = path.with_suffix(".tmp")
-                temporary.write_text(json.dumps(parents, indent=2) + "\n")
-                temporary.replace(path)
-            if args.command == "preview":
-                snapshot = client.call("session.snapshot", {})["snapshot"]
-                ordered = plan(snapshot["agents"], parents)
-                labels = {tab["tab_id"]: tab["label"] for tab in snapshot["tabs"]}
-            else:
-                ordered, labels = sync(client.call, parents, activate=args.command != "refresh")
-            if args.command != "refresh":
-                for agent, depth, supervisor in ordered:
-                    print("    " * depth + ("👑 " if supervisor else "") + labels[agent["tab_id"]])
-    finally:
-        client.close()
+    # fcntl is available on both supported platforms. Serialize concurrent event hooks and assignments.
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        parents = json.loads(path.read_text()) if path.exists() else {}
+        validate(parents)
+        if args.command in {"root", "assign"}:
+            # Resolve the exact names before saving an assignment; never infer ownership from a task label.
+            for name in [args.agent] + ([args.supervisor] if args.command == "assign" else []):
+                if not NAME.fullmatch(name):
+                    raise ValueError(f"invalid agent name: {name}")
+                request("agent.get", {"target": name})
+            if args.command == "assign":
+                parents.setdefault(args.supervisor, None)
+            parents[args.agent] = args.supervisor if args.command == "assign" else None
+        elif args.command == "remove":
+            parents.pop(args.agent, None)
+            for name, parent in list(parents.items()):
+                if parent == args.agent:
+                    parents[name] = None
+        elif args.command == "clear":
+            parents = {}
+        validate(parents)
+        if args.command in {"root", "assign", "remove", "clear"}:
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(parents, indent=2) + "\n")
+            temporary.replace(path)
+        if args.command == "preview":
+            snapshot = request("session.snapshot", {})["snapshot"]
+            ordered = plan(snapshot["agents"], parents)
+            labels = {tab["tab_id"]: tab["label"] for tab in snapshot["tabs"]}
+        else:
+            ordered, labels = sync(request, parents, activate=args.command != "refresh")
+        if args.command != "refresh":
+            for agent, depth, supervisor in ordered:
+                print("    " * depth + ("👑 " if supervisor else "") + labels[agent["tab_id"]])
 
 
 if __name__ == "__main__":
