@@ -310,8 +310,9 @@ def set_status(status, clear_needs=True):
 def wire_ask(runtime, session, text="", kind=""):
     """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act), or clear it (no `kind`).
     The session is the enrollment whose identity file names `runtime` and the native `session` id, never a pane or
-    the focused tab. Without the agent-wire CLI or an enrollment it does nothing. Returns what failed, or "";
-    never raises. Keep this identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py."""
+    the focused tab. Without the agent-wire CLI, one that predates `ask`, or an enrollment, it does nothing. Returns
+    what failed, or ""; never raises. Keep this identical in claude/hooks/herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py."""
     state = os.path.join(STATE_HOME, "agent-wire")
     folder = os.path.join(state, "identities")
     search = os.environ.get("PATH", "") + os.pathsep + os.path.expanduser("~/.local/bin")
@@ -336,7 +337,9 @@ def wire_ask(runtime, session, text="", kind=""):
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"Agent Wire ask failed: {error}"
-    return "" if result.returncode == 0 else "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
+    if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
+        return ""
+    return "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
 
 
 def mirror(kind="", text=""):

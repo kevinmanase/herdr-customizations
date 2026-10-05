@@ -74,7 +74,8 @@ def herdr(tmp_path):
 @pytest.fixture
 def wire(tmp_path):
     """A fake agent-wire CLI in ~/.local/bin, with Claude session s1 and Codex thread c1 enrolled beside another
-    session. `calls` lists its argument lists, `ask()` builds one, and `fail()` makes every call fail."""
+    session. `calls` lists its argument lists, `ask()` builds one, `fail()` makes every call fail, and `old()` makes
+    it a release without the `ask` command."""
     folder = tmp_path / ".local/bin"
     folder.mkdir(parents=True)
     shutil.copy(FAKE_WIRE, folder / "agent-wire")
@@ -99,6 +100,9 @@ def wire(tmp_path):
 
         def fail(self):
             (folder / "fail").touch()
+
+        def old(self):
+            (folder / "old").touch()
 
     return Wire()
 

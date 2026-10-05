@@ -181,6 +181,13 @@ def test_an_unenrolled_session_only_changes_the_tab(herdr, wire):
     assert wire.calls == []
 
 
+def test_an_agent_wire_without_ask_counts_as_none(herdr, wire):
+    wire.old()
+    result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert herdr.label() == "❓ ship today? · ready"
+
+
 def test_a_failed_mirror_still_flags_the_tab_and_the_command_says_so(herdr, wire):
     wire.fail()
     result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
