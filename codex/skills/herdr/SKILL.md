@@ -32,6 +32,9 @@ changes, not for each tool call. Stage emoji: 🔍 investigating, 🛠️ buildi
 🧪 testing, 👀 reviewing, 🚀 PR open, 🎉 merged, 🚧 blocked, 💥 failing, 💤 parked.
 Reserve 👑 for the shared orchestrator.
 
+If Codex exposes its native task-naming tool, keep that title in sync too. Omit
+`threadId` so the tool names the calling task.
+
 For example, run `name "🛠️ login fix"` when building, `name "🧪 login fix"`
 when testing, `name "👀 login fix"` when reviewing, and `name "🚀 login fix"`
 once its PR is open, using the same helper path above. Naming also preserves a
@@ -77,8 +80,11 @@ The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
 process against Herdr's pane process list. Inherited pane IDs and the focused
 tab are never sufficient. An ambiguous match or an app-server session gets no
-label writes; explicit commands report the missing binding. Root session and
-prompt hooks still explain that limitation. Subagent hooks do not adopt the
+label writes; explicit commands report the missing binding. Run terminal Codex
+with `--no-daemon` so its tools and hooks belong to the foreground process.
+For an existing conversation, exit Codex and run
+`codex resume <session-id> --no-daemon` in its terminal; this preserves the chat.
+Root session and prompt hooks still explain that limitation. Subagent hooks do not adopt the
 parent tab; subagents must leave the parent's labels to its owning agent. The
 helper does not start other agents.
 
@@ -177,7 +183,7 @@ For a requested new tab and Codex agent:
    `herdr tab create --workspace "$HERDR_WORKSPACE_ID" --label "<name>" --cwd <dir> --no-focus`.
    Read `.result.tab.tab_id` and `.result.root_pane.pane_id`. If your pane has moved,
    get its current workspace from `herdr pane current --current` first.
-2. Start with `herdr agent start <agent-name> --kind codex --pane <pane_id>`.
+2. Start with `herdr agent start <agent-name> --kind codex --pane <pane_id> -- --no-daemon`.
    Respect a different agent kind if Kevin requested one. Names match
    `[a-z][a-z0-9_-]{0,31}`. `agent_not_ready` can mean a trust or login dialog:
    read it and get Kevin's decision before answering it.

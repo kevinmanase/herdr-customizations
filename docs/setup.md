@@ -36,6 +36,19 @@ Codex asks you to trust new hook definitions in `/hooks`. Claude picks up
 settings changes on its own; start a new session to get the session hook's
 context.
 
+### Codex terminal sessions
+
+Launch Codex with `codex --no-daemon`. Its shared background server breaks the
+foreground-process binding used by the label helper, so the helper skips those
+sessions. The [Codex changelog](https://learn.chatgpt.com/docs/changelog)
+documents the flag. For an existing conversation, exit Codex and run
+`codex resume <session-id> --no-daemon` in the same terminal.
+
+Agent launches should pass the flag explicitly:
+`herdr agent start <name> --kind codex --pane <pane-id> -- --no-daemon`.
+Herdr 0.9.1's automatic session restore does not preserve this flag; use the
+explicit resume command above when restoring a Codex conversation.
+
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one
 turn can't land on the next. The hook marks the turn ✅ before it asks Jev, and

@@ -161,6 +161,8 @@ Only do this when Kevin asks for it, or as the orchestrator. Herdr's CLI talks t
 
 1. **Create the tab.** Run `herdr tab create --workspace "$HERDR_WORKSPACE_ID" --label "<name>" --cwd <dir> --no-focus`, then read `.result.tab.tab_id` and `.result.root_pane.pane_id`.
 2. **Start the agent.** Run `herdr agent start <agent-name> --kind claude --pane <pane_id>`.
+   For a Codex worker, use `--kind codex --pane <pane_id> -- --no-daemon`
+   instead, so its hooks can identify its foreground Herdr pane.
    - Agent names match `[a-z][a-z0-9_-]{0,31}`.
    - It returns once the agent is ready.
    - `agent_not_ready` means a startup dialog is showing, such as folder trust. Read it with `herdr agent read <name> --source recent-unwrapped --lines 60` and ask Kevin before answering it.
