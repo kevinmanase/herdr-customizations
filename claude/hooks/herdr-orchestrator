@@ -38,6 +38,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -365,11 +366,28 @@ def next_brief(*args):
         pane = start_session(name)
         if not pane:
             return 3
+        group_session(name, f"lead-{lane}" if lane else NAME)
         herdr("agent", "prompt", name, text)
         os.makedirs(os.path.join(folder, "started"), exist_ok=True)
         os.rename(path, os.path.join(folder, "started", brief))
         print(f"fleet: started {name} in pane {pane}")
     return 0
+
+
+def group_session(name, supervisor):
+    """Record an explicit assignment when the optional sidebar grouping CLI is installed."""
+    command = shutil.which("herdr-groups")
+    if not command:
+        return False
+    try:
+        result = subprocess.run([command, "assign", name, supervisor], capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            print(f"fleet: grouping {name} failed: {result.stderr.strip()}", file=sys.stderr)
+        else:
+            return True
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"fleet: grouping {name} failed: {error}", file=sys.stderr)
+    return False
 
 
 class LanesUnreadable(Exception):
@@ -642,6 +660,9 @@ def start_lead(lane):
         pane = start_session(lead, label)
         if not pane:
             return f"{lead} waits for memory"
+        if group_session(lead, NAME):
+            for session in lane_items(lane_id)[1]:
+                group_session(session, lead)
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
         brief = LEAD_BRIEF.format(
@@ -703,6 +724,8 @@ def handback(lane_id=None):
     type_into(me, f"/rename ex-{lead}")
     left = ", ".join(queued + sessions) or "nothing"
     if live():
+        for session in sessions:
+            group_session(session, NAME)
         herdr("agent", "prompt", NAME, f"Status from {lead}: handed lane {lane_id} back to you; open: {left}.")
     else:
         print(f"no orchestrator to tell; open in {lane_id}: {left}", file=sys.stderr)
