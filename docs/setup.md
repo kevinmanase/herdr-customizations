@@ -55,6 +55,50 @@ turn can't land on the next. The hook marks the turn ✅ before it asks Jev, and
 gives up on Jev after 5 seconds. For five minutes after Jev times out, it waits
 only 1 second.
 
+## Group agents under their orchestrator
+
+The [groups plugin](../plugins/agent-groups/README.md) nests each worker under
+its orchestrator in Herdr's Agents sidebar. `herdr-orchestrator next` and
+`leads` assign new workers only when `herdr-groups` is on the PATH, so install
+both:
+
+```sh
+herdr plugin install kevinmanase/herdr-customizations/plugins/agent-groups --yes
+install -m 755 plugins/agent-groups/groups.py ~/.local/bin/herdr-groups
+```
+
+Running the plugin install again updates it and keeps the assignments. In
+`~/.config/herdr/config.toml`, add `$herdr_groups_tree` to the first row, and
+keep any row preferences you already have:
+
+```toml
+[ui.sidebar.agents]
+rows = [["$herdr_groups_tree", "state_icon", "tab"]]
+```
+
+Run `herdr server reload-config` and `herdr-groups root orchestrator`. For each
+worker already running, run `herdr-groups assign <worker> orchestrator`;
+`herdr agent list` gives the names. `herdr-groups preview` shows the tree.
+
+## Check the install
+
+After a setup or an update, run this from the checkout. It prints nothing when
+every installed copy matches:
+
+```sh
+cmp claude/hooks/herdr-tab ~/.claude/hooks/herdr-tab
+cmp claude/hooks/herdr-orchestrator ~/.claude/hooks/herdr-orchestrator
+diff -r claude/skills/herdr ~/.claude/skills/herdr
+diff -r codex/skills/herdr ~/.codex/skills/herdr
+cmp plugins/agent-groups/groups.py ~/.local/bin/herdr-groups
+```
+
+Then check three things by hand:
+
+- `herdr plugin list` shows `kevin.agent-groups` at this checkout's commit.
+- `~/.claude/settings.json` has every event from the Claude example.
+- `~/.codex/hooks.json` has every event from the Codex example.
+
 ## Add the TypeSafe key
 
 Jev needs a TypeSafe key. Put it in `~/.config/team-floor/config.json`, the
