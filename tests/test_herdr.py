@@ -142,40 +142,31 @@ def test_codex_helper_keeps_an_ask_until_working(herdr, env, monkeypatch):
     assert herdr.label() == "⏳ 🛠️ login fix"
 
 
-def wire_ask(wire, *ask, identity="mine"):
-    return ["--state", wire.state, "ask", "--identity", wire.identity(identity), *ask]
-
-
-def test_an_ask_sets_both_and_kevins_prompt_clears_both(herdr, wire):
+def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
     herdr.run(TAB, "name", "🔍 login bug")
     result = herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     assert result.returncode == 0, result.stderr
     assert herdr.label() == "❓ ship today? · 🔍 login bug"
-    assert wire.calls == [wire_ask(wire, "--to", "Kevin", "--text", "ship today?", "--kind", "decide")]
+    assert wire.calls == [wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide")]
     herdr.run(TAB, "request", "log in", CLAUDE_CODE_SESSION_ID="s1")
-    assert wire.calls[-1] == wire_ask(wire, "--to", "Kevin", "--text", "log in", "--kind", "act")
+    assert wire.calls[-1] == wire.ask("--to", "Kevin", "--text", "log in", "--kind", "act")
     herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "done"}))
     assert herdr.label() == "⏳ 🔍 login bug"
-    assert wire.calls[-1] == wire_ask(wire, "--clear")
-
-
-def test_a_dialog_answer_clears_both(herdr, wire):
+    assert wire.calls[-1] == wire.ask("--clear")
     herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     herdr.run(TAB, "hook", "resume", stdin=json.dumps({"session_id": "s1", "tool_name": "AskUserQuestion"}))
-    assert wire.calls[-1] == wire_ask(wire, "--clear")
+    assert wire.calls[-1] == wire.ask("--clear")
+    assert len(wire.calls) == 5
 
 
 def test_peer_and_task_prompts_clear_neither(herdr, wire):
+    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
+    assert wire.calls == []  # nothing was flagged
     herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     for prompt in ("<task-notification>\n<status>completed</status>\n</task-notification>", "Status from p3: done"):
         herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": prompt}))
     assert herdr.label() == "❓ ship today? · ready"
     assert len(wire.calls) == 1
-
-
-def test_a_prompt_with_nothing_flagged_leaves_agent_wire_alone(herdr, wire):
-    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
-    assert wire.calls == []
 
 
 def test_without_agent_wire_only_the_tab_changes(herdr):
@@ -205,9 +196,7 @@ def test_codex_helper_mirrors_its_ask(herdr, wire):
     herdr.run(CODEX_TAB, "name", "🛠️ login fix")
     result = herdr.run(CODEX_TAB, "ask", "ship today?", CODEX_THREAD_ID="c1")
     assert result.returncode == 0, result.stderr
-    assert wire.calls == [
-        wire_ask(wire, "--to", "Kevin", "--text", "ship today?", "--kind", "decide", identity="codex")
-    ]
+    assert wire.calls == [wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide", identity="codex")]
     herdr.run(CODEX_TAB, "status", "working", CODEX_THREAD_ID="c1")
     assert herdr.label() == "⏳ 🛠️ login fix"
-    assert wire.calls[-1] == wire_ask(wire, "--clear", identity="codex")
+    assert wire.calls[-1] == wire.ask("--clear", identity="codex")

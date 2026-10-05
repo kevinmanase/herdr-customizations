@@ -1,6 +1,7 @@
 import copy
 import http.server
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -73,7 +74,7 @@ def herdr(tmp_path):
 @pytest.fixture
 def wire(tmp_path):
     """A fake agent-wire CLI in ~/.local/bin, with Claude session s1 and Codex thread c1 enrolled beside another
-    session. `calls` lists its argument lists; `fail()` makes every call fail."""
+    session. `calls` lists its argument lists, `ask()` builds one, and `fail()` makes every call fail."""
     folder = tmp_path / ".local/bin"
     folder.mkdir(parents=True)
     shutil.copy(FAKE_WIRE, folder / "agent-wire")
@@ -82,12 +83,14 @@ def wire(tmp_path):
     for name, runtime, native in (("mine", "claude", "s1"), ("codex", "codex", "c1"), ("other", "claude", "s2")):
         identity = {"agent": {"id": name, "runtime": runtime, "native_id": native}, "session_handle": "secret"}
         (identities / f"{name}.json").write_text(json.dumps(identity))
+    retired = identities / "retired.json"  # s1's older enrollment: only the newest is used
+    retired.write_text((identities / "mine.json").read_text().replace('"mine"', '"retired"'))
+    os.utime(retired, (0, 0))
 
     class Wire:
-        state = str(tmp_path / ".local/state/agent-wire")
-
-        def identity(self, name="mine"):
-            return str(identities / f"{name}.json")
+        def ask(self, *ask, identity="mine"):
+            state = str(tmp_path / ".local/state/agent-wire")
+            return ["--state", state, "ask", "--identity", str(identities / f"{identity}.json"), *ask]
 
         @property
         def calls(self):

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Codex Herdr labels and informational hooks. Python standard library only.
-
-Agent Wire: `ask` and `request` also set the session's Agent Wire ask, and Kevin's answer clears both. See wire_ask().
-"""
+"""Codex Herdr labels and informational hooks. Python standard library only."""
 
 import argparse
 import json
@@ -18,7 +15,6 @@ from pathlib import Path
 WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
 SEPARATOR = " · "
 READY_LABEL = READY + " ready"
-WIRE_KINDS = {QUESTION: "decide", REQUEST: "act"}
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
 JEV_CHARS = 1500
 STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
@@ -195,38 +191,30 @@ def wire_ask(runtime, session, text="", kind=""):
     command = shutil.which("agent-wire", path=search)
     if not session or not command or not os.path.isdir(folder):
         return ""
-    identities = []
+    newest = (0, "")  # a re-enrolled session's older identities are retired
     for entry in os.scandir(folder):
         try:
             with open(entry.path, encoding="utf-8") as handle:
                 agent = json.load(handle)["agent"]
             if (agent["runtime"], agent["native_id"]) == (runtime, session):
-                identities.append((entry.stat().st_mtime, entry.path))
+                newest = max(newest, (entry.stat().st_mtime, entry.path))
         except (OSError, ValueError, KeyError, TypeError):
             continue
-    text = " ".join(text.split())[:120] or "needs you"
-    ask = ["--to", "Kevin", "--text", text, "--kind", kind] if kind else ["--clear"]
-    failed = ""
-    for _, identity in sorted(identities, reverse=True):  # newest first: a re-enrolled session's old one is retired
-        try:
-            result = subprocess.run(
-                [command, "--state", state, "ask", "--identity", identity, *ask],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            failed = f"Agent Wire ask failed: {error}"
-            continue
-        if result.returncode == 0:
-            return ""
-        failed = "Agent Wire ask failed: " + (result.stderr.strip() or f"exit {result.returncode}")
-    return failed
+    if not newest[1]:
+        return ""
+    ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
+    try:
+        result = subprocess.run(
+            [command, "--state", state, "ask", "--identity", newest[1], *ask], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"Agent Wire ask failed: {error}"
+    return "" if result.returncode == 0 else "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
 
 
-def mirror(status=None, text=""):
-    """Mirror an explicit command's ask into Agent Wire: set it for `status`, or clear it. Raises what failed."""
-    failed = wire_ask("codex", os.environ.get("CODEX_THREAD_ID"), text, WIRE_KINDS.get(status, ""))
+def mirror(kind="", text=""):
+    """Mirror an explicit command's ask into Agent Wire: set it as `kind`, or clear it. Raises what failed."""
+    failed = wire_ask("codex", os.environ.get("CODEX_THREAD_ID"), text, kind)
     if failed:
         raise RuntimeError(failed)
 
@@ -598,9 +586,9 @@ def main():
         elif args.command == "name":
             set_name(" ".join(args.text))
         elif args.command in ("ask", "request"):
-            status = QUESTION if args.command == "ask" else REQUEST
-            needs(status, " ".join(args.text))
-            mirror(status, " ".join(args.text))
+            text = " ".join(args.text)
+            needs(QUESTION if args.command == "ask" else REQUEST, text)
+            mirror("decide" if args.command == "ask" else "act", text)
         elif args.command == "clear":
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":
