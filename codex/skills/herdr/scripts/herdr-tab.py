@@ -171,14 +171,13 @@ def from_kevin(payload):
 
 
 def set_status(status, clear_needs=False):
-    """Set the tab's status. Returns whether that cleared an ask."""
+    """Set the tab's status, keeping a pending ask unless `clear_needs`."""
     tab = current_tab()
     current, _, name = read(tab)
     if not clear_needs and current in (QUESTION, REQUEST):
-        return False
+        return
     if current != status:
         render(tab, status, "", name)
-    return current in (QUESTION, REQUEST)
 
 
 def wire_ask(runtime, session, text="", kind=""):
@@ -517,7 +516,9 @@ def hook(payload):
             render(current_tab(), READY, "", "👑 orchestrator" if mine else "")
         # Resume and compaction preserve the task and any pending ask.
     elif event == "UserPromptSubmit":
-        if set_status(WORKING, clear_needs=from_kevin(payload)):
+        kevin = from_kevin(payload)
+        set_status(WORKING, clear_needs=kevin)
+        if kevin:  # whatever the tab showed: it may have lost the ask, or an earlier clear failed
             wire_ask("codex", payload.get("session_id"))  # fails open, like every hook
     elif event == "PreToolUse" and tool_name(payload) in (
         "request_user_input",
@@ -598,9 +599,13 @@ def main():
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":
             clear_idle(args.pane, args.session, args.terminal)
-        elif args.state == "ready":
-            render(current_tab(), READY, "", "")
-        elif set_status(WORKING if args.state == "working" else DONE, clear_needs=args.state == "working"):
+        elif args.state == "done":
+            set_status(DONE)
+        else:  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
+            if args.state == "ready":
+                render(current_tab(), READY, "", "")
+            else:
+                set_status(WORKING, clear_needs=True)
             mirror()
     except Exception as error:
         print(f"herdr-tab: {error}", file=sys.stderr)

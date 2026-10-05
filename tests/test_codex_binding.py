@@ -207,3 +207,20 @@ def test_an_ask_is_mirrored_into_agent_wire_and_working_clears_it(codex, monkeyp
 
     assert state["tabs"]["my-tab"] == "⏳ 🔍 login fix"
     assert asks == [("codex", "session-1", "ship today?", "decide"), ("codex", "session-1", "", "")]
+
+
+def test_agent_wire_clears_whenever_a_command_leaves_the_tab_without_an_ask(codex, monkeypatch):
+    # #23: `status ready` drops the tab's ask, and a retried `status working` finds none left on the tab.
+    helper, state = codex
+    asks = []
+    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args) or "")
+
+    def run(*args):
+        monkeypatch.setattr(sys, "argv", [str(SCRIPT), *args])
+        helper.main()
+
+    run("ask", "ship today?")
+    run("status", "ready")
+    assert state["tabs"]["my-tab"] == "⚪ ready"
+    run("status", "working")
+    assert asks == [("codex", "session-1", "ship today?", "decide")] + [("codex", "session-1", "", "")] * 2

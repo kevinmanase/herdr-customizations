@@ -160,8 +160,6 @@ def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
 
 
 def test_peer_and_task_prompts_clear_neither(herdr, wire):
-    herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
-    assert wire.calls == []  # nothing was flagged
     herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     for prompt in ("<task-notification>\n<status>completed</status>\n</task-notification>", "Status from p3: done"):
         herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": prompt}))
@@ -197,3 +195,7 @@ def test_a_failed_mirror_still_flags_the_tab_and_the_command_says_so(herdr, wire
     result = herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "yes"}))
     assert result.returncode == 0  # hooks fail open
     assert herdr.label() == "⏳ ready"
+    # #23: the tab has no ask left, but the retry must still reach Agent Wire, and say that it failed
+    result = herdr.run(TAB, "status", "working", CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 1
+    assert wire.calls[-2:] == [wire.ask("--clear")] * 2

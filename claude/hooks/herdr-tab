@@ -297,14 +297,13 @@ def from_kevin(payload):
 
 
 def set_status(status, clear_needs=True):
-    """Set the tab's status. Returns whether that cleared an ask."""
+    """Set the tab's status, keeping a pending ask unless `clear_needs`."""
     tab = current_tab()
     current, ask, name = read(tab)
     if not clear_needs and current in (QUESTION, REQUEST):
-        return False
+        return
     if current != status:
         render(tab, status, "", name)
-    return current in (QUESTION, REQUEST)
 
 
 def wire_ask(runtime, session, text="", kind=""):
@@ -567,7 +566,9 @@ def hook(event):
         if not agent:
             ensure_orchestrator()
     elif event in ("prompt", "resume"):
-        if set_status(WORKING, clear_needs=from_kevin(payload)):
+        kevin = from_kevin(payload)
+        set_status(WORKING, clear_needs=kevin)
+        if kevin:  # whatever the tab showed: it may have lost the ask, or an earlier clear failed
             wire_ask("claude", payload.get("session_id"))  # fails open, like every hook
     elif event == "question":
         needs("question", dialog_ask(payload))
@@ -609,8 +610,9 @@ def main():
         needs("question" if command == "ask" else "request", text)
         mirror("decide" if command == "ask" else "act", text)
     elif command == "status" and args:
-        if args[0] in ("working", "done") and set_status(WORKING if args[0] == "working" else DONE):
-            mirror()
+        if args[0] in ("working", "done"):
+            set_status(WORKING if args[0] == "working" else DONE)
+            mirror()  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
     elif command == "name" and args:
         set_name(" ".join(args))
     elif command == "clear":
