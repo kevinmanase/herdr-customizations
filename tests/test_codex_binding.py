@@ -223,4 +223,8 @@ def test_agent_wire_clears_whenever_a_command_leaves_the_tab_without_an_ask(code
     run("status", "ready")
     assert state["tabs"]["my-tab"] == "⚪ ready"
     run("status", "working")
-    assert asks == [("codex", "session-1", "ship today?", "decide")] + [("codex", "session-1", "", "")] * 2
+    assert asks == [
+        ("codex", "session-1", "ship today?", "decide"),
+        ("codex", "session-1", "", ""),
+        ("codex", "session-1", "", ""),
+    ]
