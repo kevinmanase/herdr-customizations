@@ -660,9 +660,6 @@ def start_lead(lane):
         pane = start_session(lead, label)
         if not pane:
             return f"{lead} waits for memory"
-        if group_session(lead, NAME):
-            for session in lane_items(lane_id)[1]:
-                group_session(session, lead)
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
         brief = LEAD_BRIEF.format(
@@ -675,6 +672,12 @@ def start_lead(lane):
             handback=HANDBACK_AT,
         )
         herdr("agent", "prompt", lead, brief)
+        if group_session(lead, NAME):
+            try:
+                for session in lane_items(lane_id)[1]:
+                    group_session(session, lead)
+            except RuntimeError as error:
+                print(f"fleet: grouping {lead}'s workers failed: {error}", file=sys.stderr)
     return f"started {lead} in pane {pane}"
 
 

@@ -9,6 +9,7 @@ import inspect
 import json
 import runpy
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,30 @@ def test_a_new_lead_groups_the_lanes_existing_workers(herdr, lanes, queue, group
         ["assign", "lead-api", "orchestrator"],
         ["assign", "worker", "lead-api"],
     ]
+
+
+def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(monkeypatch, tmp_path, capsys):
+    start = runpy.run_path(str(ORCHESTRATOR))["start_lead"]
+    calls = []
+    for name, value in {
+        "QUEUE": str(tmp_path),
+        "locked": lambda *args: nullcontext(),
+        "agent_named": lambda *args: None,
+        "lost_lead": lambda *args: None,
+        "start_session": lambda *args: "p2",
+        "group_session": lambda *args: True,
+        "herdr": lambda *args: calls.append(args),
+    }.items():
+        monkeypatch.setitem(start.__globals__, name, value)
+
+    def unavailable(*args):
+        raise RuntimeError("agent list unavailable")
+
+    monkeypatch.setitem(start.__globals__, "lane_items", unavailable)
+    assert start(LANES["lanes"][0]) == "started lead-api in pane p2"
+    assert calls[0][:3] == ("agent", "prompt", "lead-api")
+    assert "You are lead-api" in calls[0][3]
+    assert "workers failed: agent list unavailable" in capsys.readouterr().err
 
 
 def test_handback_groups_the_remaining_worker_under_the_orchestrator(herdr, lanes, queue, grouping_cli):
