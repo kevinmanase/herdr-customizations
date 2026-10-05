@@ -1,5 +1,6 @@
 import json
 import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -124,10 +125,18 @@ def test_available_memory_reads_on_this_platform():
     assert runpy.run_path(str(ORCHESTRATOR))["available_mb"]() > 0
 
 
-def test_codex_helper_keeps_an_ask_until_working(herdr):
-    herdr.run(CODEX_TAB, "name", "🛠️ login fix")
-    herdr.run(CODEX_TAB, "ask", "ship today?")
-    herdr.run(CODEX_TAB, "status", "done")
+def test_codex_helper_keeps_an_ask_until_working(herdr, env, monkeypatch):
+    env(**herdr.environ)
+    helper = runpy.run_path(str(CODEX_TAB))
+    helper["main"].__globals__["resolve_hook_pane"] = lambda payload=None: "p1"
+
+    def run(*args):
+        monkeypatch.setattr(sys, "argv", [str(CODEX_TAB), *args])
+        helper["main"]()
+
+    run("name", "🛠️ login fix")
+    run("ask", "ship today?")
+    run("status", "done")
     assert herdr.label() == "❓ ship today? · 🛠️ login fix"
-    herdr.run(CODEX_TAB, "status", "working")
+    run("status", "working")
     assert herdr.label() == "⏳ 🛠️ login fix"

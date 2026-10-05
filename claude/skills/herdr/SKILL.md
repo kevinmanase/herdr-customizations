@@ -107,6 +107,13 @@ Exactly one Claude session in Herdr is the orchestrator. It keeps track of every
 - **Moving the role:** when Kevin makes you the orchestrator, run `~/.claude/hooks/herdr-orchestrator claim`. It moves the name and the crown to you, and renames and colors your session. Then tell the old orchestrator with SendMessage.
 - **Every other session:** send the orchestrator one line whenever you merge, get blocked, finish, or start another session.
 
+When `herdr-groups` is installed, record manually claimed supervisors and
+adopted workers too. Use `herdr-groups root <name>` for a top-level supervisor,
+`herdr-groups assign <lead> <parent>` for a delegated lead, and
+`herdr-groups assign <worker> <supervisor>` when dispatching or adopting a known
+worker. Preserve existing assignments unless Kevin changes ownership. A name
+or task label alone does not establish ownership.
+
 ### If you are the orchestrator
 
 - **Coordinate, don't do the work.** Your own jobs are reading tabs, relaying, queueing, and flagging Kevin. Everything else goes to a fresh session with a self-contained brief: investigations, checks, deploys, watching CI or a deploy, documents, fixes. Queue it and run `herdr-orchestrator next`. A small, lean orchestrator stays responsive and survives a `/clear`.

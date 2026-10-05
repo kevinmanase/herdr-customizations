@@ -1,9 +1,11 @@
 # Set up the Herdr customization
 
 Requirements: [Herdr](https://github.com/herdrdev/herdr) (checked with 0.9.1),
-Python 3.11+, `jq`, and a TypeSafe key for Jev (see below), on Linux or macOS. Run Claude Code or Codex inside a
-Herdr pane. Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`, and every
-helper does nothing without them.
+Python 3.11+ and `jq`, on Linux or macOS. A TypeSafe key enables optional Jev
+checks (see below). Run Claude Code or Codex inside a
+Herdr pane. Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; helpers do nothing
+outside Herdr. Codex verifies its foreground process against Herdr's panes
+before changing labels, so moved or stale pane IDs cannot target another tab.
 
 ## Copy the files
 

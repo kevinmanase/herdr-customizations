@@ -21,10 +21,17 @@ JEV_FAILED = os.path.join(STATE_HOME, "herdr-tab/jev-failed")  # shared by the C
 SCRIPT = Path(__file__).resolve()
 SKILL = SCRIPT.parent.parent / "SKILL.md"
 REMINDER = (
-    f"Herdr: use the herdr skill at {SKILL}. Keep this tab's short task name and "
-    "stage emoji current. Before waiting on Kevin, call "
+    f'Herdr: before task work, run python3 "{SCRIPT}" name "🔍 <short task>". '
+    f'Rename with the same command to "🛠️ <short task>" when building, "🧪 <short task>" when testing, '
+    '"👀 <short task>" when reviewing, and "🚀 <short task>" once the PR is open. '
+    f"Use the herdr skill at {SKILL}. Before waiting on Kevin, call "
     f'python3 "{SCRIPT}" ask "<question>" or request "<action needed>". '
     "Keep pending asks visible until answered."
+)
+UNBOUND_REMINDER = (
+    "Herdr: this Codex session could not be matched to one foreground Herdr pane, so automatic labels were skipped. "
+    "Do not rename tabs or change labels using inherited pane IDs or the focused tab. "
+    "App-server sessions need a verified session-to-pane binding before label commands can work."
 )
 
 
@@ -43,17 +50,18 @@ def herdr(*args, timeout=2):
     return response.get("result", {})
 
 
-def resolve_hook_pane(payload):
-    """Bind a hook to its foreground Codex process, never a daemon's pane env.
+def resolve_hook_pane(payload=None):
+    """Bind a hook or explicit command to its foreground Codex process, never inherited pane IDs.
 
     Shared app-server threads have no trustworthy per-pane process ancestry.
     Until the runtime supplies that binding, skip their automatic metadata and
-    labels. Explicit pane-scoped helper commands remain available.
+    labels. Explicit commands enforce the same binding.
     """
-    session = payload.get("session_id")
-    inherited = os.environ.get("CODEX_THREAD_ID")
-    if not session or payload.get("agent_id") or (inherited and inherited != session):
-        return None
+    if payload is not None:
+        session = payload.get("session_id")
+        inherited = os.environ.get("CODEX_THREAD_ID")
+        if not session or payload.get("agent_id") or (inherited and inherited != session):
+            return None
     ancestors = set()
     seen = set()
     pid = os.getppid()
@@ -435,14 +443,21 @@ def jev_warning():
 
 
 def hook(payload):
-    pane = resolve_hook_pane(payload)
-    if not pane:
+    if payload.get("agent_id"):
         return {}
-    os.environ["HERDR_PANE_ID"] = pane
     event = payload.get("hook_event_name")
     output = {}
     if event in ("SessionStart", "UserPromptSubmit"):
-        output = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": REMINDER}}
+        output = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": UNBOUND_REMINDER}}
+    try:
+        pane = resolve_hook_pane(payload)
+    except Exception:
+        return output
+    if not pane:
+        return output
+    os.environ["HERDR_PANE_ID"] = pane
+    if output:
+        output["hookSpecificOutput"]["additionalContext"] = REMINDER
     if event == "SessionStart":
         mine, context = session_role()
         output["hookSpecificOutput"]["additionalContext"] += " " + context
@@ -511,8 +526,15 @@ def main():
     args = parser.parse_args()
     output = {}
     try:
-        if os.environ.get("HERDR_ENV") != "1" or not os.environ.get("HERDR_PANE_ID"):
+        if os.environ.get("HERDR_ENV") != "1":
             return
+        if args.command in ("name", "status", "ask", "request"):
+            pane = resolve_hook_pane()
+            if not pane:
+                raise RuntimeError(
+                    "Cannot bind this Codex process to one foreground Herdr pane; no labels were changed"
+                )
+            os.environ["HERDR_PANE_ID"] = pane
         if args.command == "hook":
             payload = json.load(sys.stdin)
             if isinstance(payload, dict):
