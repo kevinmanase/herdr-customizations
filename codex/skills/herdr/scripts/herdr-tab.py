@@ -598,10 +598,14 @@ def main():
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":
             clear_idle(args.pane, args.session, args.terminal)
-        elif args.state == "ready":
-            render(current_tab(), READY, "", "")
-        elif set_status(WORKING if args.state == "working" else DONE, clear_needs=args.state == "working"):
-            mirror()
+        elif args.state == "done":
+            set_status(DONE)  # keeps a pending ask, so Agent Wire keeps it too
+        else:
+            if args.state == "ready":
+                render(current_tab(), READY, "", "")
+            else:
+                set_status(WORKING, clear_needs=True)
+            mirror()  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
     except Exception as error:
         print(f"herdr-tab: {error}", file=sys.stderr)
         if args.command != "hook":

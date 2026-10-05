@@ -197,3 +197,7 @@ def test_a_failed_mirror_still_flags_the_tab_and_the_command_says_so(herdr, wire
     result = herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "yes"}))
     assert result.returncode == 0  # hooks fail open
     assert herdr.label() == "⏳ ready"
+    # #23: the tab has no ask left, but the retry must still reach Agent Wire, and say that it failed
+    result = herdr.run(TAB, "status", "working", CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 1
+    assert wire.calls[-2:] == [wire.ask("--clear")] * 2

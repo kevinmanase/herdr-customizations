@@ -609,8 +609,9 @@ def main():
         needs("question" if command == "ask" else "request", text)
         mirror("decide" if command == "ask" else "act", text)
     elif command == "status" and args:
-        if args[0] in ("working", "done") and set_status(WORKING if args[0] == "working" else DONE):
-            mirror()
+        if args[0] in ("working", "done"):
+            set_status(WORKING if args[0] == "working" else DONE)
+            mirror()  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
     elif command == "name" and args:
         set_name(" ".join(args))
     elif command == "clear":
