@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
+WORKING, DONE, CLEAN, READY, QUESTION, REQUEST = "⏳", "✅", "🧹", "⚪", "❓", "❗"
 SEPARATOR = " · "
 READY_LABEL = READY + " ready"
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
@@ -29,6 +29,8 @@ REMINDER = (
     f'python3 "{SCRIPT}" ask "<question>" or request "<action needed>". '
     "Keep pending asks visible until answered."
 )
+FINISH_REMINDER = f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
+
 UNBOUND_REMINDER = (
     "Herdr: this Codex session could not be matched to one foreground Herdr pane, so automatic labels were skipped. "
     "Do not rename tabs or change labels using inherited pane IDs or the focused tab. "
@@ -112,7 +114,7 @@ def parse(label):
     label = label.strip()
     if label == READY_LABEL:
         return READY, "", ""
-    for status in (WORKING, DONE, READY, QUESTION, REQUEST):
+    for status in (WORKING, DONE, CLEAN, READY, QUESTION, REQUEST):
         if label.startswith(status):
             rest = label[len(status) :].strip()
             if status in (QUESTION, REQUEST) and SEPARATOR in rest:
@@ -506,7 +508,7 @@ def hook(payload):
         output["hookSpecificOutput"]["additionalContext"] = REMINDER
     if event == "SessionStart":
         mine, context = session_role()
-        output["hookSpecificOutput"]["additionalContext"] += " " + context
+        output["hookSpecificOutput"]["additionalContext"] += " " + FINISH_REMINDER + " " + context
         warning = jev_warning()
         if warning:
             output["systemMessage"] = warning
@@ -545,7 +547,7 @@ def hook(payload):
         except Exception:  # a Herdr hiccup: set_status reads again
             set_status(DONE)
             return output
-        if status in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
+        if status in (QUESTION, REQUEST, CLEAN):  # a flagged ask already shows, or the session said it's finished
             return output
         if status != DONE:
             render(tab, DONE, "", name)  # now, so the turn reads done even if the hook is cut short
@@ -563,7 +565,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("name", "ask", "request"):
         commands.add_parser(command).add_argument("text", nargs="+")
-    commands.add_parser("status").add_argument("state", choices=("working", "done", "ready"))
+    commands.add_parser("status").add_argument("state", choices=("working", "done", "clean", "ready"))
     commands.add_parser("hook")
     clear = commands.add_parser("clear", help="clear only the exact session Kevin approved")
     clear.add_argument("--approved-pane")
@@ -604,7 +606,7 @@ def main():
             if args.state == "ready":
                 render(current_tab(), READY, "", "")
             else:
-                set_status(WORKING, clear_needs=True)
+                set_status(WORKING if args.state == "working" else CLEAN, clear_needs=True)
             mirror()  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
     except Exception as error:
         print(f"herdr-tab: {error}", file=sys.stderr)

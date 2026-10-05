@@ -118,10 +118,11 @@ def test_jev_only_turns_a_done_tab_into_a_question(stop, herdr, jev, meanwhile, 
     assert herdr.label() == label
 
 
-def test_a_flagged_ask_skips_jev(stop, herdr, jev):
-    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "❓ merge now? · login fix"})
-    stop("Should I merge it now?", TYPESAFE_API_KEY="test-key")
-    assert not jev.requests and herdr.label() == "❓ merge now? · login fix"
+@pytest.mark.parametrize("label", ["❓ merge now? · login fix", "🧹 login fix"])  # an ask, or finished
+def test_a_flagged_or_clean_tab_skips_jev(stop, herdr, jev, label):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": label})
+    stop("I've left this conversation open. Want me to clear it?", TYPESAFE_API_KEY="test-key")
+    assert not jev.requests and herdr.label() == label
 
 
 def test_a_herdr_hiccup_still_ends_the_turn_done(stop, herdr):
