@@ -36,12 +36,14 @@ reviewing, PR open, merged, or parked. The skill keeps the task and stage
 current. Hooks update turn state and flag questions or permission requests.
 When a turn ends with nothing flagged, Jev, TypeSafe's fast classifier, checks
 whether the agent's last message waits on me, so a question it forgot to flag
-still shows ❓.
+still shows ❓. A finished session sets 🧹 itself, and the Stop hook leaves that
+tab alone, so its sign-off can't read as a question.
 
 | Prefix | Meaning in this customization |
 | --- | --- |
 | `⏳` | Working |
 | `✅` | Turn finished, nothing needed from me |
+| `🧹` | Task finished and reported; it only needs my yes to clear it |
 | `⚪` | Ready, no active task |
 | `❓` | I need to answer or decide |
 | `❗` | I need to take an action |

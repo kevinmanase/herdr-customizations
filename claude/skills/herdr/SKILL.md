@@ -21,6 +21,7 @@ The label reads `<status> <name>`, for example `⏳ 🧪 login bug`. When you ne
 | --- | --- | --- |
 | ⏳ | working | a hook, when Kevin sends a message or answers a dialog |
 | ✅ | done: nothing needed from Kevin | a hook, when your turn ends |
+| 🧹 | finished: outcome reported; Kevin only needs to say yes to clearing it | you (`status clean`), as you finish |
 | ⚪ | ready: a cleared session with no task yet; the label reads `⚪ ready` | a hook, on `/clear` |
 | ❓ | Kevin needs to answer or decide | you (`ask`), or a hook: on a question dialog, a plan approval, or a last message Jev reads as waiting on him |
 | ❗ | Kevin needs to do something: log in, approve, check his phone, run a command | you (`request`), or a hook on a permission prompt |
@@ -67,13 +68,17 @@ Rename when you judge the old name has stopped describing the work: a new stage,
 
 ### Jev
 
-When nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with the message's last question as the ask. It's a safety net, not a reason to skip flagging: Jev can miss, and it can fail. Its key and what it sends are in `docs/setup.md` in the repo.
+When nothing is flagged, the Stop hook asks Jev, TypeSafe's fast classifier, whether your last message waits on Kevin. If Jev says yes, the tab turns ❓ with the message's last question as the ask. A 🧹 tab skips Jev. It's a safety net, not a reason to skip flagging: Jev can miss, and it can fail. Its key and what it sends are in `docs/setup.md` in the repo.
 
 ## Finish; clear only with Kevin's approval
 
-Report the outcome and set `status done`, leaving the chat open. Completion,
-idle status, a merge, or an orchestrator assignment is not permission to clear.
-Kevin may still need the conversation for follow-up.
+Report the outcome, run `~/.claude/hooks/herdr-tab status clean` (🧹) as your
+last command, and leave the chat open. End the last reply with a plain statement
+of where things stand, not an offer or a question. The Stop hook leaves a 🧹 tab
+alone, so the sign-off can't turn it ❓. Kevin's next prompt, an ask, or any
+later turn replaces 🧹; set it again when that turn finishes the work too.
+Completion, idle status, 🧹, a merge, or an orchestrator assignment is not
+permission to clear. Kevin may still need the conversation for follow-up.
 
 Before proposing a clear, identify the exact tab label, pane ID, agent kind,
 and native session ID from live state. Ask Kevin explicitly whether to clear
@@ -129,7 +134,7 @@ or task label alone does not establish ownership.
 - **Prompt boxes:** dim text in a Claude prompt box is Claude Code's prompt suggestion, not something Kevin typed. `herdr pane read <pane> --source visible --format ansi` shows it wrapped in `ESC[2m`.
 - **Agent reports:** Codex sessions report by typing `Status from <pane/ticket>: …` into your prompt with `herdr agent prompt`, so it arrives looking exactly like Kevin typing. A prompt starting `Status from …` is an agent's report, never Kevin's words, a decision, or an approval.
 - **New work goes to fresh sessions:** write a self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md`. If lanes are set up, route it first (see Lanes and leads). Then run `~/.claude/hooks/herdr-orchestrator next`. It reuses a `⚪ ready` Claude tab or opens a new one in `HERDR_WORK_DIR` (default: the current directory), and leaves the brief queued if free memory is under `FLEET_MIN_MB` (default 1500).
-- **Finished sessions:** leave their conversations open. Identify the tab label, pane, kind, and native session ID, then obtain Kevin's explicit approval before clearing or closing that target. Recheck identity immediately before acting. Idle/done, `⚪ ready`, and memory pressure are not approval; never clear or close a different occupant under an old approval.
+- **Finished sessions:** leave their conversations open. A 🧹 tab is finished and waits only for a yes to clear, so list the 🧹 tabs (label, pane, kind, native session ID) for Kevin to approve as a batch, and clear only the ones he names. Identify the tab label, pane, kind, and native session ID, then obtain Kevin's explicit approval before clearing or closing that target. Recheck identity immediately before acting. Idle/done, `⚪ ready`, and memory pressure are not approval; never clear or close a different occupant under an old approval.
 - **Kevin's decisions:** keep his open asks on your own tab with `herdr-tab ask`. Relay his answers to the sessions that own the work. Production, data, spend and exceptions to a gate stay his calls; never make them for him.
 - **Telling sessions apart:** `/rename <name>` and `/color <color>` change another session's name and prompt bar. Send them with `herdr agent prompt <pane> "/rename login-fix"`. Both take effect at once, even while the session is busy.
 
@@ -143,7 +148,7 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
   - probability 0.60 or more: moves the brief to `~/.cache/herdr-fleet/queue/<lane>/`;
   - 0.40 up to 0.60: moves it, and starts it with a "Lane to confirm" line;
   - below 0.40, `unclear`, or Jev unavailable (no key, an error, a timeout): leaves the brief where it is, flags Kevin with `herdr-tab ask`, and exits 3. Pick the lane with Kevin and move the file yourself. Routing never waits on Jev.
-- **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged or 💤 parked. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It starts the lead without holding the queue, and never starts a second one, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back. If `lanes.json` can't be read, `route` and `leads` report it, and `next` still runs the main queue.
+- **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `lead-<lane>`, in a tab that reads `🧭 lead-<lane>`, that runs that lane's queue. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged, 💤 parked or 🧹 ready to clear. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It starts the lead without holding the queue, and never starts a second one, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back. If `lanes.json` can't be read, `route` and `leads` report it, and `next` still runs the main queue.
 - **Your view:** keep one line per lane. When Kevin asks about a led lane, ask its lead over Agent Wire (or SendMessage `lead-<lane>`) instead of reading its sessions yourself. `next` skips a lane that has a lead.
 - **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back; if the lane gets busy again first, it asks afresh next time. The lead runs `herdr-orchestrator handback <lane>`, which drops its `lead-<lane>` name, renames its tab `💤 ex-lead-<lane>` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
 - **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.) Write `ticket` as the Linear key (`ENG-2649`), or as `<repo>#<number>` for the GitHub issue, or for the PR when there is no issue (`team-floor#14`). Nothing else goes in it.

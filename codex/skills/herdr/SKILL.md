@@ -44,6 +44,7 @@ pending question or action.
 | --- | --- |
 | ⏳ | Working |
 | ✅ | Turn finished; nothing needed from Kevin |
+| 🧹 | Finished: outcome reported; Kevin only needs to say yes to clearing it |
 | ⚪ | Ready, with no active task; a cleared session reads `⚪ ready` |
 | ❓ | Kevin needs to answer or decide |
 | ❗ | Kevin needs to act, such as signing in or approving a permission |
@@ -67,14 +68,16 @@ With Agent Wire, `ask` and `request` also set this session's Agent Wire ask
 set it again yourself. Flag after your last `session_update` of the turn: an
 update replaces the whole report, ask included.
 
-When finishing with nothing needed, run:
+When a turn ends with nothing needed, run:
 
 ```bash
 python3 ~/.codex/skills/herdr/scripts/herdr-tab.py status done
 ```
 
-`status done` preserves an existing ❓/❗. `status working` clears it when Kevin
-responds or the request is resolved. The prompt hook clears it only for Kevin's
+When the task itself is finished, run `status clean` instead (🧹, see Finish).
+
+`status done` preserves an existing ❓/❗; `status working` and `status clean`
+clear it. Use `status working` when Kevin responds or the request is resolved. The prompt hook clears it only for Kevin's
 own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
 The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
@@ -97,8 +100,12 @@ ownership. Never infer ownership from tab labels, working directories, or tasks.
 
 ## Finish; clear only with Kevin's approval
 
-The default is to report the outcome and set `status done`, leaving the chat
-open. Completion, idle status, a merge, or an orchestrator assignment is not
+The default is to report the outcome, run `status clean` (🧹) as your last
+command, and leave the chat open. End the last reply with a plain statement of
+where things stand, not an offer or a question. The Stop hook skips Jev on a 🧹
+tab, so the sign-off can't turn it ❓. Kevin's next prompt, an ask, or any later
+turn replaces 🧹; set it again when that turn finishes the work too.
+Completion, idle status, 🧹, a merge, or an orchestrator assignment is not
 permission to clear a conversation. Kevin may still need it for follow-up.
 
 Before proposing a clear, identify the exact tab label, pane ID, agent kind,

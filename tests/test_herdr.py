@@ -85,6 +85,14 @@ def test_clear_resets_a_worker_to_ready(herdr):
     assert herdr.label() == "⚪ ready"
 
 
+@pytest.mark.parametrize("label, code", [("🧹 login fix", 0), ("❓ merge now? · login fix", 1)])
+def test_clear_takes_a_clean_tab_but_not_a_pending_ask(herdr, label, code):
+    target = {"agent": "claude", "pane_id": "p1", "tab_id": "t1", "terminal_id": "x1", "agent_session": {"value": "s1"}}
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": label}, agents={**herdr.state["agents"], "p1": target})
+    result = herdr.run(TAB, "clear", "--approved-pane", "p1", "--approved-session", "s1")
+    assert result.returncode == code
+
+
 def test_nothing_happens_outside_herdr(herdr):
     herdr.run(TAB, "name", "🔍 login bug", HERDR_ENV="0")
     assert herdr.label() == "⏳ ready"
@@ -156,7 +164,11 @@ def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
     herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
     herdr.run(TAB, "hook", "resume", stdin=json.dumps({"session_id": "s1", "tool_name": "AskUserQuestion"}))
     assert wire.calls[-1] == wire.ask("--clear")
-    assert len(wire.calls) == 5
+    herdr.run(TAB, "ask", "ship today?", CLAUDE_CODE_SESSION_ID="s1")
+    herdr.run(TAB, "status", "clean", CLAUDE_CODE_SESSION_ID="s1")  # finished: the ask goes from both
+    assert herdr.label() == "🧹 🔍 login bug"
+    assert wire.calls[-1] == wire.ask("--clear")
+    assert len(wire.calls) == 7
 
 
 def test_peer_and_task_prompts_clear_neither(herdr, wire):

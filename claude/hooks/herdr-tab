@@ -4,21 +4,22 @@
     herdr-tab ask "<question for Kevin>"         ❓ he needs to answer or decide
     herdr-tab request "<what Kevin must do>"     ❗ he needs to act: log in, approve, check his phone
     herdr-tab name "<short name>"                set the name, keep the status
-    herdr-tab status working|done                set the status (clears an ask)
+    herdr-tab status working|done|clean          set the status (clears an ask); clean is 🧹, ready to clear
     herdr-tab clear --approved-pane ID --approved-session ID   clear only the target Kevin approved
     herdr-tab hook <event>                       Claude Code hooks call this with the hook JSON on stdin
     herdr-tab check-jev                          ask Jev once, and say whether the Stop hook can use it
 
-Labels read "⏳ <name>" (working), "✅ <name>" (done), or "❓ <ask> · <name>" / "❗ <ask> · <name>"
-when Kevin is needed. Needing Kevin also pops a Herdr notification. His next message, or his
-answer to a question dialog, clears it. A /clear resets the label to "⚪ ready", not ✅: a
-checkmark reads as done, and a cleared session has done nothing. (Herdr's own screen detection
-already marks Claude's dialogs blocked; a reported state doesn't override it on a live Claude
-pane, so this doesn't try.) Outside Herdr it does nothing. It never fails a hook: every error
-exits 0.
+Labels read "⏳ <name>" (working), "✅ <name>" (done), "🧹 <name>" (done, ready to clear), or
+"❓ <ask> · <name>" / "❗ <ask> · <name>" when Kevin is needed. Needing Kevin also pops a Herdr
+notification. His next message, or his answer to a question dialog, clears it. A /clear resets the
+label to "⚪ ready", not ✅: a checkmark reads as done, and a cleared session has done nothing.
+(Herdr's own screen detection already marks Claude's dialogs blocked; a reported state doesn't
+override it on a live Claude pane, so this doesn't try.) Outside Herdr it does nothing. It never
+fails a hook: every error exits 0.
 
 Jev: when nothing is flagged, the Stop hook asks Jev whether the turn's last message waits on Kevin,
-so an ask the agent forgot to flag still shows. See jev_says_waiting() and jev_warning().
+so an ask the agent forgot to flag still shows. See jev_says_waiting() and jev_warning(). A 🧹 tab skips
+Jev: the session said it's finished, so a sign-off that reads like an offer can't turn it ❓.
 """
 
 import json
@@ -30,7 +31,7 @@ import sys
 import threading
 import time
 
-WORKING, DONE, READY, QUESTION, REQUEST = "⏳", "✅", "⚪", "❓", "❗"
+WORKING, DONE, CLEAN, READY, QUESTION, REQUEST = "⏳", "✅", "🧹", "⚪", "❓", "❗"
 READY_LABEL = READY + " ready"  # a cleared tab has no task, so no name
 NEEDS = {"question": QUESTION, "request": REQUEST}
 SEPARATOR = " · "
@@ -54,7 +55,8 @@ SESSION_REMINDER = (
     "Once you know what this task is, name the tab in a few words, led by a stage emoji: "
     '`~/.claude/hooks/herdr-tab name "🔍 login bug"`. Rename it when the work '
     "reaches a new stage. Hooks show ⏳ while you work and ✅ when you stop. Before you stop "
-    "to wait on Kevin, flag it so his tab lights up: " + FLAG_HOW + " Details: the `herdr` skill."
+    "to wait on Kevin, flag it so his tab lights up: " + FLAG_HOW + " When the task is finished, run "
+    "`~/.claude/hooks/herdr-tab status clean` last, for 🧹. Details: the `herdr` skill."
 )
 TURN_REMINDER = "Herdr: if you end this turn needing Kevin, flag it first: " + FLAG_HOW
 
@@ -79,7 +81,7 @@ def parse(label):
     label = label.strip()
     if label == READY_LABEL:
         return READY, "", ""
-    for status in (WORKING, DONE, READY, QUESTION, REQUEST):
+    for status in (WORKING, DONE, CLEAN, READY, QUESTION, REQUEST):
         if label.startswith(status):
             rest = label[len(status) :].strip()
             if status in (QUESTION, REQUEST):  # an unnamed tab's ask isn't its name
@@ -586,7 +588,7 @@ def hook(event):
         except Exception:  # a Herdr hiccup: set_status reads again
             set_status(DONE, clear_needs=False)
             return
-        if status in (QUESTION, REQUEST):  # a flagged ask already shows; Jev can't add to it
+        if status in (QUESTION, REQUEST, CLEAN):  # a flagged ask already shows, or the session said it's finished
             return
         if status != DONE:
             render(tab, DONE, "", name)  # now, so the turn reads done even if the hook is cut short
@@ -609,8 +611,8 @@ def main():
         needs("question" if command == "ask" else "request", text)
         mirror("decide" if command == "ask" else "act", text)
     elif command == "status" and args:
-        if args[0] in ("working", "done"):
-            set_status(WORKING if args[0] == "working" else DONE)
+        if args[0] in ("working", "done", "clean"):
+            set_status({"working": WORKING, "done": DONE, "clean": CLEAN}[args[0]])
             mirror()  # the tab is left without an ask, so clear Agent Wire's too, whatever the tab showed before
     elif command == "name" and args:
         set_name(" ".join(args))
