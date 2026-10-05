@@ -194,3 +194,16 @@ def test_an_explicit_discovery_error_is_reported_without_label_writes(codex, mon
     assert error.value.code == 1
     assert "pane discovery failed" in capsys.readouterr().err
     assert label_writes(state) == []
+
+
+def test_an_ask_is_mirrored_into_agent_wire_and_working_clears_it(codex, monkeypatch):
+    helper, state = codex
+    asks = []
+    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args) or "")
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "ask", "ship today?"])
+    helper.main()
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "status", "working"])
+    helper.main()
+
+    assert state["tabs"]["my-tab"] == "⏳ 🔍 login fix"
+    assert asks == [("codex", "session-1", "ship today?", "decide"), ("codex", "session-1", "", "")]

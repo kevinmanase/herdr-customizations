@@ -197,13 +197,3 @@ def test_a_failed_mirror_still_flags_the_tab_and_the_command_says_so(herdr, wire
     result = herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "yes"}))
     assert result.returncode == 0  # hooks fail open
     assert herdr.label() == "⏳ ready"
-
-
-def test_codex_helper_mirrors_its_ask(herdr, wire):
-    herdr.run(CODEX_TAB, "name", "🛠️ login fix")
-    result = herdr.run(CODEX_TAB, "ask", "ship today?", CODEX_THREAD_ID="c1")
-    assert result.returncode == 0, result.stderr
-    assert wire.calls == [wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide", identity="codex")]
-    herdr.run(CODEX_TAB, "status", "working", CODEX_THREAD_ID="c1")
-    assert herdr.label() == "⏳ 🛠️ login fix"
-    assert wire.calls[-1] == wire.ask("--clear", identity="codex")
