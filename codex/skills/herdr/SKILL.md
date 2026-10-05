@@ -77,8 +77,8 @@ python3 ~/.codex/skills/herdr/scripts/herdr-tab.py status done
 When the task itself is finished, run `status clean` instead (🧹, see Finish).
 
 `status done` preserves an existing ❓/❗; `status working` and `status clean`
-clear it. Use `status working` when Kevin responds or the request is resolved. The prompt hook clears it only for Kevin's
-own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
+clear it. Use `status working` when Kevin responds or the request is resolved.
+The prompt hook clears it only for Kevin's own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
 The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
 process against Herdr's pane process list. Inherited pane IDs and the focused

@@ -27,9 +27,10 @@ REMINDER = (
     '"👀 <short task>" when reviewing, and "🚀 <short task>" once the PR is open. '
     f"Use the herdr skill at {SKILL}. Before waiting on Kevin, call "
     f'python3 "{SCRIPT}" ask "<question>" or request "<action needed>". '
-    "Keep pending asks visible until answered. "
-    f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
+    "Keep pending asks visible until answered."
 )
+FINISH_REMINDER = f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
+
 UNBOUND_REMINDER = (
     "Herdr: this Codex session could not be matched to one foreground Herdr pane, so automatic labels were skipped. "
     "Do not rename tabs or change labels using inherited pane IDs or the focused tab. "
@@ -507,7 +508,7 @@ def hook(payload):
         output["hookSpecificOutput"]["additionalContext"] = REMINDER
     if event == "SessionStart":
         mine, context = session_role()
-        output["hookSpecificOutput"]["additionalContext"] += " " + context
+        output["hookSpecificOutput"]["additionalContext"] += " " + FINISH_REMINDER + " " + context
         warning = jev_warning()
         if warning:
             output["systemMessage"] = warning

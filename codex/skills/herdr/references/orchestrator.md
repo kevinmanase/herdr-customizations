@@ -58,9 +58,8 @@ worker, use the skill's `--kind codex` recipe. The Claude
 `herdr-orchestrator next` runner starts Claude sessions; it is not a Codex launcher.
 
 Leave finished worker conversations open by default. A 🧹 tab is finished and
-waits only for a yes to clear, so list the 🧹 tabs (label, pane, kind, native
-session ID) for Kevin to approve as a batch, and clear only the ones he names.
-Before clearing any
+waits only for a yes to clear, so list the 🧹 tabs for Kevin to approve as a
+batch. Before clearing any
 conversation, identify its tab label, pane, agent kind, and native session ID
 and obtain Kevin's explicit approval for that target. Completion and idle/done
 are not permission. Recheck the identity immediately before an approved clear;
