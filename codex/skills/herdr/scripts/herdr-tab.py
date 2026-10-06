@@ -218,20 +218,12 @@ def wire_ask(runtime, session, text="", kind="", options=()):
     if not newest[1]:
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
+    argv = [command, "--state", state, "ask", "--identity", newest[1], *ask]
     presets = [word for option in options for word in ("--option", option)]
-
-    def run(*extra):
-        return subprocess.run(
-            [command, "--state", state, "ask", "--identity", newest[1], *ask, *extra],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
     try:
-        result = run(*presets)
-        if presets and "unrecognized arguments: --option" in result.stderr:  # predates options: ask without them
-            result = run()
+        result = subprocess.run(argv + presets, capture_output=True, text=True, timeout=5)
+        if "unrecognized arguments: --option" in result.stderr:  # an agent-wire from before options: ask without them
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"Agent Wire ask failed: {error}"
     if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
@@ -616,15 +608,11 @@ def main():
                 output = hook(payload)
         elif args.command == "name":
             set_name(" ".join(args.text))
-        elif args.command == "ask":
-            options = check_options(args.option)
+        elif args.command in ("ask", "request"):
+            options = check_options(getattr(args, "option", []))
             text = " ".join(args.text)
-            needs(QUESTION, text)
-            mirror("decide", text, options)
-        elif args.command == "request":
-            text = " ".join(args.text)
-            needs(REQUEST, text)
-            mirror("act", text)
+            needs(QUESTION if args.command == "ask" else REQUEST, text)
+            mirror("decide" if args.command == "ask" else "act", text, options)
         elif args.command == "clear":
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":

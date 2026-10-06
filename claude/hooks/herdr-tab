@@ -345,20 +345,12 @@ def wire_ask(runtime, session, text="", kind="", options=()):
     if not newest[1]:
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
+    argv = [command, "--state", state, "ask", "--identity", newest[1], *ask]
     presets = [word for option in options for word in ("--option", option)]
-
-    def run(*extra):
-        return subprocess.run(
-            [command, "--state", state, "ask", "--identity", newest[1], *ask, *extra],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
     try:
-        result = run(*presets)
-        if presets and "unrecognized arguments: --option" in result.stderr:  # predates options: ask without them
-            result = run()
+        result = subprocess.run(argv + presets, capture_output=True, text=True, timeout=5)
+        if "unrecognized arguments: --option" in result.stderr:  # an agent-wire from before options: ask without them
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"Agent Wire ask failed: {error}"
     if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
@@ -630,21 +622,19 @@ def main():
     command, args = sys.argv[1], sys.argv[2:]
     if command == "status" and args[:1] == ["question"]:  # older spelling of `ask`
         command, args = "ask", args[1:] or ["needs you"]
-    if command == "ask" and args:
-        import argparse
+    if command in ("ask", "request") and args:
+        options = []
+        if command == "ask":
+            import argparse
 
-        parser = argparse.ArgumentParser(prog="herdr-tab ask")
-        parser.add_argument("text", nargs="+")
-        parser.add_argument("--option", action="append", default=[])
-        ask = parser.parse_args(args)
-        options = check_options(ask.option)
-        text = " ".join(ask.text)
-        needs("question", text)
-        mirror("decide", text, options)
-    elif command == "request" and args:
+            parser = argparse.ArgumentParser(prog="herdr-tab ask")
+            parser.add_argument("text", nargs="+")
+            parser.add_argument("--option", action="append", default=[])
+            ask = parser.parse_args(args)
+            args, options = ask.text, check_options(ask.option)
         text = " ".join(args)
-        needs("request", text)
-        mirror("act", text)
+        needs("question" if command == "ask" else "request", text)
+        mirror("decide" if command == "ask" else "act", text, options)
     elif command == "status" and args:
         states = {"working": WORKING, "done": DONE, "clean": CLEAN}
         if args[0] in states:
