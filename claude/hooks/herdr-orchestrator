@@ -102,15 +102,15 @@ LEAD_BRIEF = (
     "is down to {handback} open item, run `~/.claude/hooks/herdr-orchestrator handback {lane}`. "
     "Leave this conversation open afterwards; never clear it."
 )
-KEVINS_MESSAGE = "----- Kevin's message -----\n{text}\n----- end of Kevin's message -----"
+MESSAGE = "----- {who}'s message -----\n{text}\n----- end of {who}'s message -----"
+KEVINS_MESSAGE = MESSAGE.replace("{who}", "Kevin")
 CHAT_NOTE = (
     "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on "
     "first:\n\n" + KEVINS_MESSAGE
 )
 AGENT_NOTE = (
-    "\n\nThe team floor's chat agent ({agent}) started this lead from the chat. Its message, not "
-    "Kevin's own, which is yours to act on first:\n\n----- {agent}'s message -----\n{text}\n"
-    "----- end of {agent}'s message -----"
+    "\n\nThe team floor's chat agent ({who}) started this lead from the chat. Its message, not "
+    "Kevin's own, which is yours to act on first:\n\n" + MESSAGE
 )
 AGENT_NAME = re.compile(r"[\w.-]{1,32}@[\w.-]{1,64}")  # the team floor's chat-agent@<machine>
 CHAT_AGENT = "chat-agent"
@@ -754,9 +754,9 @@ def start_once(lock, mark, names, brief, on_start=None):
     return 0, f"started {name} in pane {pane}", True
 
 
-def start_lead(lane, message=None, agent=None):
-    """Start a lane's lead unless it has one, with `message` from the owner, or passed on by the chat
-    agent named `agent`, appended to its brief. Returns start_once's exit code and what happened."""
+def start_lead(lane, note=""):
+    """Start a lane's lead unless it has one, with `note` (the chat's message) appended to its brief.
+    Returns start_once's exit code and what happened."""
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
     lane_id = lane["id"]
@@ -771,8 +771,7 @@ def start_lead(lane, message=None, agent=None):
         lane=lane_id,
         handback=HANDBACK_AT,
     )
-    if message:
-        brief += AGENT_NOTE.format(agent=agent, text=message) if agent else CHAT_NOTE.format(text=message)
+    brief += note
 
     def fresh_lead():  # a new lead hasn't been asked to hand back yet, even if it then misses its brief
         with contextlib.suppress(FileNotFoundError):
@@ -823,11 +822,11 @@ def owner_message(command, path):
     return message or None
 
 
-def lead(lane_id=None, flag=None, path=None, *by):
+def lead(lane_id=None, flag=None, path=None, by=None, agent=None):
     """Start one lane's lead now, its first prompt carrying the owner's message from `path`, or with
     `--from-agent <name>` the chat agent's."""
-    agent = by[1] if len(by) == 2 and by[0] == "--from-agent" else None
-    if not lane_id or flag != "--prompt-file" or not path or by and not AGENT_NAME.fullmatch(agent or ""):
+    bad_by = by is not None and (by != "--from-agent" or not AGENT_NAME.fullmatch(agent or ""))
+    if not lane_id or flag != "--prompt-file" or not path or bad_by:
         print("usage: herdr-orchestrator lead <lane> --prompt-file <file> [--from-agent <name>]", file=sys.stderr)
         return 2
     try:
@@ -842,7 +841,8 @@ def lead(lane_id=None, flag=None, path=None, *by):
     message = owner_message("lead", path)
     if not message:
         return 2
-    code, line = start_lead(lane, message, agent)
+    note = AGENT_NOTE.format(who=agent, text=message) if by else CHAT_NOTE.format(text=message)
+    code, line = start_lead(lane, note)
     print(f"{lane_id}: {line}")
     return code
 

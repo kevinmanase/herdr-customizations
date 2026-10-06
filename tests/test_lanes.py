@@ -717,11 +717,11 @@ def test_the_lead_label_matches_the_orchestrator():
     assert orchestrator["lead_names"]("api") == ("api-lead", "lead-api")
 
 
-def start_from_file(herdr, tmp_path, command, text="Why is the webhook retrying twice?", **extra):
+def start_from_file(herdr, tmp_path, command, text="Why is the webhook retrying twice?", after=(), **extra):
     message = tmp_path / "message.txt"
     message.write_text(text)
     herdr.environ.pop("HERDR_PANE_ID", None)  # a launchd job runs outside any pane, with no TTY
-    return herdr.run(ORCHESTRATOR, *command, "--prompt-file", str(message), **extra)
+    return herdr.run(ORCHESTRATOR, *command, "--prompt-file", str(message), *after, **extra)
 
 
 def start_lead(herdr, tmp_path, lane="api", **extra):
@@ -749,11 +749,8 @@ def test_lead_starts_with_one_first_prompt_from_outside_herdr(herdr, lanes, queu
 
 
 def test_lead_from_the_chat_agent_says_its_message_is_the_agent_s(herdr, lanes, queue, tmp_path):
-    message = tmp_path / "message.txt"
-    message.write_text("The chat agent on m1 passes on this request from Kevin's chat:\n\nAdd an index")
-    herdr.environ.pop("HERDR_PANE_ID", None)
-    args = ("lead", "api", "--prompt-file", str(message), "--from-agent", "chat-agent@m1")
-    result = herdr.run(ORCHESTRATOR, *args)
+    text = "The chat agent on m1 passes on this request from Kevin's chat:\n\nAdd an index"
+    result = start_lead(herdr, tmp_path, text=text, after=("--from-agent", "chat-agent@m1"))
     assert result.returncode == 0, result.stderr
     (brief,) = prompts(herdr, "api-lead")
     assert "The team floor's chat agent (chat-agent@m1) started this lead from the chat" in brief
@@ -763,11 +760,9 @@ def test_lead_from_the_chat_agent_says_its_message_is_the_agent_s(herdr, lanes, 
 
 @pytest.mark.parametrize("extra", [("--from-agent",), ("--from-agent", "x y"), ("--from", "chat-agent@m1")])
 def test_lead_refuses_a_bad_from_agent(herdr, lanes, queue, tmp_path, extra):
-    message = tmp_path / "message.txt"
-    message.write_text("hi")
-    herdr.environ.pop("HERDR_PANE_ID", None)
-    result = herdr.run(ORCHESTRATOR, "lead", "api", "--prompt-file", str(message), *extra)
+    result = start_lead(herdr, tmp_path, after=extra)
     assert result.returncode == 2
+    assert "usage: herdr-orchestrator lead" in result.stderr
     assert started(herdr) == []
 
 
