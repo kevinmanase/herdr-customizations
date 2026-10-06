@@ -42,6 +42,7 @@ ORCHESTRATOR_LABEL = "👑 orchestrator"
 # A lane lead's tab, and its lane: herdr-orchestrator's LEAD mark and LANE_ID rule (a test keeps them in step).
 # Leads started before the rename are named lead-<lane>, and still lead their lane until they hand it back.
 LEAD_LABEL = re.compile(r"🧭 (?:([a-z][a-z0-9_-]{0,26})-lead|lead-([a-z][a-z0-9_-]{0,26}))")
+CHAT_LABEL = "💬 chat-agent"  # herdr-orchestrator's CHAT_LABEL, for the team floor's chat agent
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
 JEV_CHARS = 1500
 # A list item: its marker, then its text. ask_line and ask_options share it; a test keeps the two copies equal.
@@ -160,22 +161,26 @@ def unnamed(name):
         return "agent_not_found" in str(error)
 
 
-def reclaim_lead(name):
-    """If this pane's tab (named `name`) is a lane lead's and the lane has no lead under either name, take the
-    tab's name: the name, or None."""
+def reclaim_name(name):
+    """If this pane's tab (named `name`) is a lane lead's and the lane has no lead under either name, or the
+    chat agent's and nobody has its name, take the tab's name: the name, the role and its skill section, or None."""
     try:
         match = LEAD_LABEL.fullmatch(name)
-        if not match:
+        if match:
+            lane = match[1] or match[2]
+            names, role = (f"{lane}-lead", f"lead-{lane}"), ("a lane lead", "Lane leads")
+        elif name == CHAT_LABEL:
+            names, role = (name.split(" ", 1)[1],), ("the team floor's chat agent", "Chat agent")
+        else:
             return None
-        lead, lane = match[0].removeprefix("🧭 "), match[1] or match[2]
-        names = (f"{lane}-lead", f"lead-{lane}")
         if not all(map(unnamed, names)):
             return None
-        # `herdr agent start <lane>-lead` names a new lead about half a second after it starts, which can be
+        # `herdr agent start <name>` names a new session about half a second after it starts, which can be
         # after this hook runs. Give it that long before taking a name nobody else has.
         time.sleep(1)
-        if all(map(unnamed, names)) and take_name(lead):
-            return lead
+        taken = name.split(" ", 1)[1]
+        if all(map(unnamed, names)) and take_name(taken):
+            return taken, *role
     except Exception:
         pass
     return None
@@ -626,11 +631,12 @@ def hook(event):
                 " A restart cleared this pane's Herdr name. This tab still wears the crown, so the hook "
                 "gave the name back: you are still the orchestrator."
             )
-        lead = not mine and payload.get("source") != "clear" and reclaim_lead(name)
-        if lead:
+        role = not mine and payload.get("source") != "clear" and reclaim_name(name)
+        if role:
+            taken, role, section = role
             context += (
-                f" This tab reads as {lead}'s and its pane had no Herdr name, so the hook gave it that name: "
-                f"you are {lead}, a lane lead. Follow the `herdr` skill's Lane leads section."
+                f" This tab reads as {taken}'s and its pane had no Herdr name, so the hook gave it that name: "
+                f"you are {taken}, {role}. Follow the `herdr` skill's {section} section."
             )
         output = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
         warning = jev_warning()
