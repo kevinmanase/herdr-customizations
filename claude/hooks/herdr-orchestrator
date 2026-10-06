@@ -126,11 +126,12 @@ def lead_names(lane_id):
 
 def lane_lead(lane_id):
     """The lane's live lead agent and its name, or None and the name a new lead gets."""
-    for lead in lead_names(lane_id):
+    names = lead_names(lane_id)
+    for lead in names:
         agent = agent_named(lead)
         if agent:
             return agent, lead
-    return None, lead_names(lane_id)[0]
+    return None, names[0]
 
 
 def agent_named(name):
@@ -200,11 +201,15 @@ def available_mb():
         return pages * page // 2**20
 
 
+def labelled_panes(*labels):
+    """The panes of tabs whose label ends with one of `labels`."""
+    tabs = {tab["tab_id"] for tab in herdr("tab", "list")["tabs"] if (tab.get("label") or "").endswith(labels)}
+    return [pane for pane in herdr("pane", "list")["panes"] if pane["tab_id"] in tabs] if tabs else []
+
+
 def crowned_panes():
     """The panes of tabs that still wear the crown: where the orchestrator lives, or lived."""
-    tabs = herdr("tab", "list")["tabs"]
-    crowned = {tab["tab_id"] for tab in tabs if (tab.get("label") or "").endswith(LABEL)}
-    return [pane for pane in herdr("pane", "list")["panes"] if pane["tab_id"] in crowned]
+    return labelled_panes(LABEL)
 
 
 def bare_shell(pane):
@@ -654,24 +659,9 @@ def lane_items(lane_id):
 
 
 def lost_lead(lane_id):
-    """A tab that still reads as the lane lead's and runs an agent, though no agent has the lead's name:
-    its tab id and label, or None."""
+    """A tab that still reads as the lane lead's and runs an agent, though no agent has the lead's name."""
     labels = [f"{LEAD} {lead}" for lead in lead_names(lane_id)]
-    tabs = {}
-    for tab in herdr("tab", "list")["tabs"]:
-        label = next((label for label in labels if (tab.get("label") or "").endswith(label)), None)
-        if label:
-            tabs[tab["tab_id"]] = label
-    if not tabs:
-        return None
-    return next(
-        (
-            (p["tab_id"], tabs[p["tab_id"]])
-            for p in herdr("pane", "list")["panes"]
-            if p["tab_id"] in tabs and p.get("agent")
-        ),
-        None,
-    )
+    return next((p["tab_id"] for p in labelled_panes(*labels) if p.get("agent")), None)
 
 
 def survey(lane):
@@ -714,7 +704,7 @@ def start_lead(lane, message=None):
             return 0, f"{lead} is already running, so none started"
         stray = lost_lead(lane_id)
         if stray:
-            return 1, f"tab {stray[0]} reads {stray[1]} but lost the name, so no second lead starts"
+            return 1, f"tab {stray} reads as the {lane_id} lead's but lost the name, so no second lead starts"
         label = f"{LEAD} {lead}"
         pane = start_session(lead, label)
         if not pane:
@@ -795,6 +785,7 @@ def handback(lane_id=None):
         print("usage: herdr-orchestrator handback <lane>", file=sys.stderr)
         return 2
     agent, lead = lane_lead(lane_id)
+    ex = f"ex-{lead_names(lane_id)[0]}"
     if not agent or agent["pane_id"] != me:
         print(f"only {lead} hands lane {lane_id} back, from its own pane", file=sys.stderr)
         return 2
@@ -806,7 +797,7 @@ def handback(lane_id=None):
         # The tab first: a tab that still reads as the lead's, with nobody holding the name, would stop
         # any new lead for the lane. herdr-tab keeps the status and any ask.
         try:
-            renamed = subprocess.run([TAB, "name", f"💤 ex-{lane_id}-lead"], capture_output=True, text=True, timeout=30)
+            renamed = subprocess.run([TAB, "name", f"💤 {ex}"], capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as error:
             renamed = subprocess.CompletedProcess([], 1, "", str(error))
         if renamed.returncode != 0:
@@ -815,7 +806,7 @@ def handback(lane_id=None):
         herdr("agent", "rename", me, "--clear")
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
-    type_into(me, f"/rename ex-{lane_id}-lead")
+    type_into(me, f"/rename {ex}")
     left = ", ".join(queued + sessions) or "nothing"
     if live():
         for session in sessions:

@@ -346,25 +346,27 @@ def test_open_sessions_count_until_merged_or_parked(herdr, lanes, queue):
     assert started(herdr) == []
 
 
-def test_no_second_lead_beside_one_that_lost_its_name(herdr, lanes, queue):
+@pytest.mark.parametrize("lead", ["api-lead", "lead-api"])  # lead-api: a lead started before 2026-10-06
+def test_no_second_lead_beside_one_that_lost_its_name(herdr, lanes, queue, lead):
     herdr.set_state(
-        tabs={**herdr.state["tabs"], "t3": "⏳ 🧭 api-lead"},
+        tabs={**herdr.state["tabs"], "t3": f"⏳ 🧭 {lead}"},
         panes=[*herdr.state["panes"], {"pane_id": "p3", "tab_id": "t3", "agent": "claude"}],
     )
     (queue / "api").mkdir()
     for n in range(1, 5):
         (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
     result = herdr.run(ORCHESTRATOR, "leads")
-    assert "tab t3 reads 🧭 api-lead but lost the name" in result.stdout
+    assert "tab t3 reads as the api lead's but lost the name" in result.stdout
     assert started(herdr) == []
 
 
-def test_a_restarted_lead_takes_its_name_back(herdr):
-    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 🧭 api-lead"})
+@pytest.mark.parametrize("lead", ["api-lead", "lead-api"])
+def test_a_restarted_lead_takes_its_name_back(herdr, lead):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": f"✅ 🧭 {lead}"})
     result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert "you are api-lead, a lane lead" in context
-    assert herdr.state["agents"]["api-lead"]["pane_id"] == "p1"
+    assert f"you are {lead}, a lane lead" in context
+    assert herdr.state["agents"][lead]["pane_id"] == "p1"
 
 
 def be_lead(herdr, lead="api-lead", label=None):
@@ -398,25 +400,6 @@ def test_a_lane_worker_reports_to_an_old_named_lead(herdr, lanes, queue, groupin
     assert json.loads(grouping_cli.read_text()) == ["assign", "task", "lead-api"]
     (brief,) = prompts(herdr, "task")
     assert "While lead-api runs" in brief
-
-
-def test_no_second_lead_beside_an_old_named_one_that_lost_its_name(herdr, lanes, queue):
-    herdr.set_state(
-        tabs={**herdr.state["tabs"], "t3": "⏳ 🧭 lead-api"},
-        panes=[*herdr.state["panes"], {"pane_id": "p3", "tab_id": "t3", "agent": "claude"}],
-    )
-    (queue / "api").mkdir()
-    for n in range(1, 5):
-        (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
-    assert "tab t3 reads 🧭 lead-api but lost the name" in herdr.run(ORCHESTRATOR, "leads").stdout
-    assert started(herdr) == []
-
-
-def test_a_restarted_old_named_lead_takes_its_name_back(herdr):
-    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 🧭 lead-api"})
-    result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
-    assert "you are lead-api, a lane lead" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert herdr.state["agents"]["lead-api"]["pane_id"] == "p1"
 
 
 def test_an_old_named_lead_hands_back_under_the_new_label(herdr, lanes, queue):
