@@ -183,8 +183,19 @@ def set_status(status, clear_needs=False):
     return current in (QUESTION, REQUEST)
 
 
-def wire_ask(runtime, session, text="", kind=""):
-    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act), or clear it (no `kind`).
+def check_options(options):
+    """An ask's preset answers, in the asker's order: none, or 2 to 4 of 1 to 80 characters each. Raises on any other
+    list, before anything changes. Keep this identical in claude/hooks/herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py."""
+    options = [" ".join(option.split()) for option in options]
+    if options and not (2 <= len(options) <= 4 and all(0 < len(option) <= 80 for option in options)):
+        raise ValueError("an ask takes 2 to 4 options of 1 to 80 characters each")
+    return options
+
+
+def wire_ask(runtime, session, text="", kind="", options=()):
+    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act, with any preset answers in
+    `options`), or clear it (no `kind`).
     The session is the enrollment whose identity file names `runtime` and the native `session` id, never a pane or
     the focused tab. Without the agent-wire CLI, one that predates `ask`, or an enrollment, it does nothing. Returns
     what failed, or ""; never raises. Keep this identical in claude/hooks/herdr-tab and
@@ -207,10 +218,20 @@ def wire_ask(runtime, session, text="", kind=""):
     if not newest[1]:
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
-    try:
-        result = subprocess.run(
-            [command, "--state", state, "ask", "--identity", newest[1], *ask], capture_output=True, text=True, timeout=5
+    presets = [word for option in options for word in ("--option", option)]
+
+    def run(*extra):
+        return subprocess.run(
+            [command, "--state", state, "ask", "--identity", newest[1], *ask, *extra],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
+
+    try:
+        result = run(*presets)
+        if presets and "unrecognized arguments: --option" in result.stderr:  # predates options: ask without them
+            result = run()
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"Agent Wire ask failed: {error}"
     if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
@@ -218,9 +239,9 @@ def wire_ask(runtime, session, text="", kind=""):
     return "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
 
 
-def mirror(kind="", text=""):
+def mirror(kind="", text="", options=()):
     """Mirror an explicit command's ask into Agent Wire: set it as `kind`, or clear it. Raises what failed."""
-    failed = wire_ask("codex", os.environ.get("CODEX_THREAD_ID"), text, kind)
+    failed = wire_ask("codex", os.environ.get("CODEX_THREAD_ID"), text, kind, options)
     if failed:
         raise RuntimeError(failed)
 
@@ -567,6 +588,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("name", "ask", "request"):
         commands.add_parser(command).add_argument("text", nargs="+")
+    commands.choices["ask"].add_argument("--option", action="append", default=[], help="a preset answer (2 to 4)")
     commands.add_parser("status").add_argument("state", choices=("working", "done", "clean", "ready"))
     commands.add_parser("hook")
     clear = commands.add_parser("clear", help="clear only the exact session Kevin approved")
@@ -594,10 +616,15 @@ def main():
                 output = hook(payload)
         elif args.command == "name":
             set_name(" ".join(args.text))
-        elif args.command in ("ask", "request"):
+        elif args.command == "ask":
+            options = check_options(args.option)
             text = " ".join(args.text)
-            needs(QUESTION if args.command == "ask" else REQUEST, text)
-            mirror("decide" if args.command == "ask" else "act", text)
+            needs(QUESTION, text)
+            mirror("decide", text, options)
+        elif args.command == "request":
+            text = " ".join(args.text)
+            needs(REQUEST, text)
+            mirror("act", text)
         elif args.command == "clear":
             clear_when_done(args.approved_pane, args.approved_session)
         elif args.command == "_clear-idle":

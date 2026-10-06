@@ -171,6 +171,33 @@ def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
     assert len(wire.calls) == 7
 
 
+def test_an_ask_passes_its_options_to_agent_wire_and_the_label_stays(herdr, wire):
+    result = herdr.run(
+        TAB, "ask", "ship today?", "--option", "yes (recommended)", "--option", " no ", CLAUDE_CODE_SESSION_ID="s1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert herdr.label() == "❓ ship today? · ready"
+    ask = ("--to", "Kevin", "--text", "ship today?", "--kind", "decide")
+    assert wire.calls == [wire.ask(*ask, "--option", "yes (recommended)", "--option", "no")]
+
+
+def test_an_agent_wire_without_options_still_gets_the_ask(herdr, wire):
+    wire.no_options()
+    result = herdr.run(TAB, "ask", "ship today?", "--option", "yes", "--option", "no", CLAUDE_CODE_SESSION_ID="s1")
+    assert (result.returncode, result.stderr) == (0, "")
+    ask = wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide")
+    assert wire.calls == [ask + ["--option", "yes", "--option", "no"], ask]
+
+
+@pytest.mark.parametrize("options", [["yes"], ["a", "b", "c", "d", "e"], ["yes", " "], ["yes", "n" * 81]])
+def test_a_bad_option_list_changes_nothing(herdr, wire, options):
+    flags = [word for option in options for word in ("--option", option)]
+    result = herdr.run(TAB, "ask", "ship today?", *flags, CLAUDE_CODE_SESSION_ID="s1")
+    assert result.returncode == 1
+    assert "2 to 4 options" in result.stderr
+    assert (herdr.label(), wire.calls) == ("⏳ ready", [])
+
+
 def test_peer_and_task_prompts_clear_neither(herdr, wire):
     herdr.run(TAB, "hook", "prompt", stdin=json.dumps({"session_id": "s1", "prompt": "hi"}))
     assert wire.calls == []  # nothing was flagged

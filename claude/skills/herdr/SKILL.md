@@ -39,6 +39,14 @@ Flagging puts the ask in the tab's label, for example `❓ merge the PR now, or 
 
 With Agent Wire, `ask` and `request` also set your session's Agent Wire ask (kind `decide` or `act`), and the same answer from Kevin clears both, so don't set it again yourself. Flag after your last `session_update` of the turn: an update replaces your whole report, ask included.
 
+When the question is a choice, give Kevin 2 to 4 preset answers, each up to 80 characters, with the one you recommend first and saying so. He can tap one or type his own:
+
+```bash
+~/.claude/hooks/herdr-tab ask "merge the PR now?" --option "merge now (recommended)" --option "wait for CI on staging"
+```
+
+The options go to Agent Wire only; the tab label shows the question as before. An Agent Wire too old for options still gets the ask, without them.
+
 ### Name: everything after the status
 
 You own the name. Set it as soon as you understand the task well enough to say it in a few words:

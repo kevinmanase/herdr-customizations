@@ -199,7 +199,7 @@ def test_an_explicit_discovery_error_is_reported_without_label_writes(codex, mon
 def test_an_ask_is_mirrored_into_agent_wire_and_working_clears_it(codex, monkeypatch):
     helper, state = codex
     asks = []
-    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args) or "")
+    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args[:4]) or "")
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "ask", "ship today?"])
     helper.main()
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "status", "working"])
@@ -209,11 +209,28 @@ def test_an_ask_is_mirrored_into_agent_wire_and_working_clears_it(codex, monkeyp
     assert asks == [("codex", "session-1", "ship today?", "decide"), ("codex", "session-1", "", "")]
 
 
+def test_an_asks_options_reach_agent_wire_and_a_bad_list_changes_nothing(codex, monkeypatch, capsys):
+    helper, state = codex
+    asks = []
+    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args) or "")
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "ask", "ship today?", "--option", "yes", "--option", "no"])
+    helper.main()
+    assert asks == [("codex", "session-1", "ship today?", "decide", ["yes", "no"])]
+
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "ask", "merge now?", "--option", "yes"])
+    with pytest.raises(SystemExit) as error:
+        helper.main()
+    assert error.value.code == 1
+    assert "2 to 4 options" in capsys.readouterr().err
+    assert state["tabs"]["my-tab"] == "❓ ship today? · 🔍 login fix"
+    assert len(asks) == 1
+
+
 def test_agent_wire_clears_whenever_a_command_leaves_the_tab_without_an_ask(codex, monkeypatch):
     # #23: `status ready` drops the tab's ask, and a retried `status working` finds none left on the tab.
     helper, state = codex
     asks = []
-    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args) or "")
+    monkeypatch.setattr(helper, "wire_ask", lambda *args: asks.append(args[:4]) or "")
 
     def run(*args):
         monkeypatch.setattr(sys, "argv", [str(SCRIPT), *args])

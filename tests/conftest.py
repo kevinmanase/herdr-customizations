@@ -104,6 +104,9 @@ def wire(tmp_path):
         def old(self):
             (folder / "old").touch()
 
+        def no_options(self):
+            (folder / "no-options").touch()
+
     return Wire()
 
 
