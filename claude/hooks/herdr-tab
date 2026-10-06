@@ -2,6 +2,7 @@
 """Show a Claude session's state on its Herdr tab, and make it obvious when Kevin is needed.
 
     herdr-tab ask "<question for Kevin>"         ❓ he needs to answer or decide
+        [--option "<answer>" ...]                2 to 4 preset answers for Agent Wire, recommended one first
     herdr-tab request "<what Kevin must do>"     ❗ he needs to act: log in, approve, check his phone
     herdr-tab name "<short name>"                set the name, keep the status
     herdr-tab status working|done|clean          set the status (clears an ask); clean is 🧹, ready to clear
@@ -309,8 +310,19 @@ def set_status(status, clear_needs=True):
     return current in (QUESTION, REQUEST)
 
 
-def wire_ask(runtime, session, text="", kind=""):
-    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act), or clear it (no `kind`).
+def check_options(options):
+    """An ask's preset answers, in the asker's order: none, or 2 to 4 of 1 to 80 characters each. Raises on any other
+    list, before anything changes. Keep this identical in claude/hooks/herdr-tab and
+    codex/skills/herdr/scripts/herdr-tab.py."""
+    options = [" ".join(option.split()) for option in options]
+    if options and not (2 <= len(options) <= 4 and all(0 < len(option) <= 80 for option in options)):
+        raise ValueError("an ask takes 2 to 4 options of 1 to 80 characters each")
+    return options
+
+
+def wire_ask(runtime, session, text="", kind="", options=()):
+    """Set this session's Agent Wire ask for Kevin (`text`, of `kind` decide or act, with any preset answers in
+    `options`), or clear it (no `kind`).
     The session is the enrollment whose identity file names `runtime` and the native `session` id, never a pane or
     the focused tab. Without the agent-wire CLI, one that predates `ask`, or an enrollment, it does nothing. Returns
     what failed, or ""; never raises. Keep this identical in claude/hooks/herdr-tab and
@@ -333,10 +345,12 @@ def wire_ask(runtime, session, text="", kind=""):
     if not newest[1]:
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
+    argv = [command, "--state", state, "ask", "--identity", newest[1], *ask]
+    presets = [f"--option={option}" for option in options]  # one word each, so "-f" can't read as a flag
     try:
-        result = subprocess.run(
-            [command, "--state", state, "ask", "--identity", newest[1], *ask], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(argv + presets, capture_output=True, text=True, timeout=5)
+        if "unrecognized arguments: --option" in result.stderr:  # an agent-wire from before options: ask without them
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"Agent Wire ask failed: {error}"
     if result.returncode == 0 or "invalid choice: 'ask'" in result.stderr:  # an older agent-wire is no agent-wire
@@ -344,9 +358,9 @@ def wire_ask(runtime, session, text="", kind=""):
     return "Agent Wire ask failed: " + (result.stderr.strip() or "no reason given")
 
 
-def mirror(kind="", text=""):
+def mirror(kind="", text="", options=()):
     """Mirror an explicit command's ask into Agent Wire: set it as `kind`, or clear it. Raises what failed."""
-    failed = wire_ask("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"), text, kind)
+    failed = wire_ask("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"), text, kind, options)
     if failed:
         raise RuntimeError(failed)
 
@@ -609,9 +623,19 @@ def main():
     if command == "status" and args[:1] == ["question"]:  # older spelling of `ask`
         command, args = "ask", args[1:] or ["needs you"]
     if command in ("ask", "request") and args:
-        text = " ".join(args)
+        words, options = [], []
+        rest = iter(args)
+        for word in rest:  # any other word is the ask's text, even one that looks like a flag
+            if command == "ask" and word == "--option":
+                options.append(next(rest, ""))
+            elif command == "ask" and word.startswith("--option="):
+                options.append(word.partition("=")[2])
+            else:
+                words.append(word)
+        options = check_options(options)
+        text = " ".join(words)
         needs("question" if command == "ask" else "request", text)
-        mirror("decide" if command == "ask" else "act", text)
+        mirror("decide" if command == "ask" else "act", text, options)
     elif command == "status" and args:
         states = {"working": WORKING, "done": DONE, "clean": CLEAN}
         if args[0] in states:
