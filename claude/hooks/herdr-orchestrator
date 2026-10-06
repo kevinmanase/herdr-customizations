@@ -37,7 +37,8 @@ lead runs `handback`. Its conversation stays open.
 `lead` starts one lane's lead on demand, for the team floor's chat: its one first prompt is the
 lead brief with the owner's message appended. It needs no TTY, only HERDR_ENV=1, HERDR_WORK_DIR and
 HERDR_WORKSPACE_ID, so a launchd job can run it. It exits 0 when it starts the lead or one is
-already running, 3 when memory is short, 2 for a lane not in LANES, and 1 when herdr fails.
+already running, 3 when memory is short, 2 for a lane not in LANES, and 1 when herdr fails or a
+tab that lost the lead's name stands in the way.
 """
 
 import contextlib
@@ -313,7 +314,7 @@ def prompt_when_ready(name, text):
 def start_session(name, label=None):
     """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
     # A cleared session is already running and fresh, so reusing one costs no memory.
-    workspace = os.environ["HERDR_WORKSPACE_ID"]
+    workspace = os.environ.get("HERDR_WORKSPACE_ID")
     # `next` and a lead started on demand can run at once, so pick and relabel under one lock: the tab stops
     # reading ⚪ ready before anything else can pick it again.
     with locked(QUEUE, ".ready.lock"):
@@ -325,7 +326,7 @@ def start_session(name, label=None):
                 if p["tab_id"] in ready
                 and p.get("agent") == "claude"
                 and p.get("cwd") == WORK_DIR
-                and p.get("workspace_id", workspace) == workspace
+                and (not workspace or p.get("workspace_id", workspace) == workspace)
                 and p.get("agent_status") in ("idle", "done")
             ),
             None,
@@ -333,13 +334,19 @@ def start_session(name, label=None):
         if reuse:
             herdr("tab", "rename", reuse["tab_id"], label or name)
     if reuse:
-        herdr("agent", "rename", reuse["pane_id"], name)
+        try:
+            herdr("agent", "rename", reuse["pane_id"], name)
+        except RuntimeError:  # give the tab back, so it neither reads as a lead nor gets lost to reuse
+            with contextlib.suppress(RuntimeError):
+                herdr("tab", "rename", reuse["tab_id"], "⚪ ready")
+            raise
         type_into(name, f"/rename {name}")
         return reuse["pane_id"]
     avail = available_mb()
     if avail < MIN_MB:
         print(f"fleet: {avail} MB available, {MIN_MB} needed; {name} not started")
         return None
+    workspace = os.environ["HERDR_WORKSPACE_ID"]
     tab = herdr("tab", "create", "--workspace", workspace, "--label", label or name, "--cwd", WORK_DIR, "--no-focus")
     pane = tab["root_pane"]["pane_id"]
     try:
@@ -697,7 +704,10 @@ def start_lead(lane, message=None):
         )
         if message:
             brief += CHAT_NOTE.format(text=message)
-        prompt_when_ready(lead, brief)
+        try:
+            prompt_when_ready(lead, brief)
+        except RuntimeError as error:
+            raise RuntimeError(f"{lead} started in pane {pane} but didn't get its brief: {error}") from None
         if group_session(lead, NAME):
             try:
                 for session in lane_items(lane_id)[1]:

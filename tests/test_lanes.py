@@ -767,3 +767,29 @@ def test_two_nexts_do_not_share_one_ready_tab(herdr, queue, tmp_path):
     assert agents["eng-1"]["pane_id"] == "p2"
     assert agents["eng-2"]["pane_id"] != "p2"
     assert herdr.label("t2") == "eng-1"
+
+
+def test_a_ready_tab_whose_agent_rename_fails_reads_ready_again(herdr, lanes, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
+    herdr.set_state(fail={"agent rename p2": "agent_name_taken"})
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "agent_name_taken" in result.stderr
+    assert herdr.label("t2") == "⚪ ready"
+
+
+def test_lead_says_when_the_started_lead_missed_its_brief(herdr, lanes, queue, tmp_path):
+    herdr.set_state(fail={"agent prompt lead-api": "agent_blocked"})
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "lead-api started in pane t3:p1 but didn't get its brief" in result.stderr
+    assert "agent_blocked" in result.stderr
+
+
+def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
+    herdr.environ.pop("HERDR_WORKSPACE_ID")
+    (queue / "01-eng-1.md").write_text("First.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert herdr.state["agents"]["eng-1"]["pane_id"] == "p2"
