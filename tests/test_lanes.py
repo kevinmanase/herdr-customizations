@@ -589,6 +589,10 @@ def test_the_shared_copies_are_identical(name, scripts):
     assert len({inspect.getsource(runpy.run_path(str(script))[name]) for script in scripts}) == 1
 
 
+def test_the_helpers_read_list_items_alike():
+    assert len({runpy.run_path(str(script))["LIST_ITEM"].pattern for script in HELPERS}) == 1
+
+
 def test_the_copies_share_the_jev_constants(env, tmp_path):
     orchestrator, claude, codex = (runpy.run_path(str(script)) for script in COPIES)
     assert orchestrator["JEV_URL"] == claude["JEV_URL"] == codex["JEV_URL"]

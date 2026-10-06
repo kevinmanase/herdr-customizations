@@ -196,6 +196,7 @@ def test_a_broken_failure_note_never_costs_a_session_its_context(start, env, tmp
         ),
         ("Tell me which you prefer.\n- A\n- B", "Tell me which you prefer."),
         ("- A\n- B", "reply needed"),
+        ("Should I:\nA) Retry\nB) Revert", "Should I:"),
     ],
 )
 def test_the_ask_is_the_last_question_jev_saw(message, ask):
@@ -220,6 +221,8 @@ OPTIONS = [
     ("Should I:\n1. Retry the job\n2. Revert the change", ["Retry the job", "Revert the change"]),
     ("Do you want 1 or 2?\n1. Ship it\n2. Hold it", ["Ship it", "Hold it"]),
     ("Pick one?\n- " + "x" * 100 + "\n- y", ["x" * 79 + "…", "y"]),
+    ("Should I:\nA) Retry the job\nB) Revert the change", ["Retry the job", "Revert the change"]),
+    ("Options:\n1. Retry\n2. Revert\n\nWhich do you want?", ["Retry", "Revert"]),
 ]
 NO_OPTIONS = [
     "Should I open the PR?\n\nWhat I did:\n1. Fixed the parser\n2. Added tests",  # done steps, under a label
@@ -227,6 +230,9 @@ NO_OPTIONS = [
     "- The parser handles tabs\n- Tests cover it\n\nShould I proceed?",  # facts, then a yes/no question
     "Here's what changed:\n- parser\n- tests\n\nWhat do you think?",  # an open question
     "Changes:\n- parser\n- tests\n\nWould you prefer to merge now or wait for review?",  # its own alternatives
+    "Status:\n- Tests pass\n- Lint is clean\n\nWhich PR should I open first?",  # facts above a choice
+    "What I checked:\n- CI is green\n- Review is clean\n\nHow would you like to proceed?",  # the same
+    "- Retry\n- Revert\n\nWhich do you want?",  # nothing names the list as the choices
     "Which do you want?\n1. Merge now\n2. Wait for CI\n\nI'd merge.",  # the list isn't at the end
     "Which do you want?\n1. A\n2. B\n3. C\n4. D\n5. E",  # more than 4
     "Which do you want?\n1. Merge now",  # one

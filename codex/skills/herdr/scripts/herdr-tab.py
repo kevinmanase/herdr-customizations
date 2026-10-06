@@ -17,6 +17,8 @@ SEPARATOR = " · "
 READY_LABEL = READY + " ready"
 JEV_URL = os.environ.get("TYPESAFE_API_URL") or "https://api.typesafe.ai/v1/systemone"
 JEV_CHARS = 1500
+# A list item: its marker, then its text. ask_line and ask_options share it; a test keeps the two copies equal.
+LIST_ITEM = re.compile(r"([-*+•]|\d+[.)]|[A-Da-d][.)]|\([A-Da-d1-4]\))\s+(.+)")
 STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
 JEV_FAILED = os.path.join(STATE_HOME, "herdr-tab/jev-failed")  # shared by the Claude and Codex helpers
 SCRIPT = Path(__file__).resolve()
@@ -477,8 +479,8 @@ def ask_line(text):
         if line.startswith(("```", "~~~")):
             code = not code
         elif line and not code and end > start and not raw.startswith(("    ", "\t", "#", ">", "|")):
-            item = re.match(r"(?:[-*+]|\d+[.)])\s+", line)
-            line = re.split(r"(?<=[.!])\s+(?=[A-Z])", line[item.end() if item else 0 :].strip("*_ "))[-1]
+            item = LIST_ITEM.fullmatch(line)
+            line = re.split(r"(?<=[.!])\s+(?=[A-Z])", (item[2] if item else line).strip("*_ "))[-1]
             if line.endswith("?"):
                 questions.append(line)
             elif line and not item:
@@ -493,7 +495,7 @@ def ask_options(text, ask):
     out its own alternatives, and the items must be one flat list of choices, not steps already done. Keep this
     identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py."""
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
-    item = re.compile(r"([-*+•]|\d[.)]|[A-Da-d][.)]|\([A-Da-d1-4]\))\s+(.+)")
+    item = LIST_ITEM
     after = lines.pop() if lines and not item.fullmatch(lines[-1]) and not lines[-1][0].isspace() else ""
     block = []
     while lines and (item.fullmatch(lines[-1]) or lines[-1][0].isspace()):  # items and their indented lines
@@ -512,6 +514,11 @@ def ask_options(text, ask):
     ):
         return []  # repeats, checkboxes, or done steps ("Fixed the parser")
     anchor = after or (lines[-1] if lines else "")
+    intro = re.search(
+        r"(?i)\b(?:options?|choices?|ways?|approach(?:es)?|alternatives?|paths?)\b.*:$", lines[-1] if lines else ""
+    )
+    if after and not intro:
+        return []  # a list above the ask must be named as the choices ("Two ways:"), not facts ("Status:")
     if anchor.strip("*_ ") != ask and not anchor.strip("*_ ").endswith(" " + ask):  # the list is not by the ask
         return []
     anchor = ask
