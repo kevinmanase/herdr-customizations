@@ -8,7 +8,7 @@
     herdr-orchestrator route <brief>   ask Jev which lane a queued brief belongs to, and move it there
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
     herdr-orchestrator lead <lane> --prompt-file <file>
-                                       start lead-<lane> now, with the file's text as the owner's first message
+                                       start <lane>-lead now, with the file's text as the owner's first message
     herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
 
 The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
@@ -31,7 +31,7 @@ brief's last 1,500 characters, and our rules decide: probability >= 0.60 routes;
 routes and marks the brief "lane to confirm"; anything else, `unclear`, or no Jev leaves the
 brief where it is and flags Kevin. It exits 0 when it routes and 3 when Kevin has to pick.
 A lane with at least LEAD_AT open briefs or sessions gets a lead: a fresh Claude session named
-lead-<lane> that runs that lane's queue. When the lane is down to HANDBACK_AT open items, the
+<lane>-lead that runs that lane's queue. When the lane is down to HANDBACK_AT open items, the
 lead runs `handback`. Its conversation stays open.
 
 `lead` starts one lane's lead on demand, for the team floor's chat: its one first prompt is the
@@ -66,7 +66,7 @@ SHELL_TRIES, SHELL_WAIT = 20, 0.5  # agent starts, and seconds between them, whi
 READY_TRIES = 120  # first prompts, SHELL_WAIT apart, while a new session finishes starting
 GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
 LANES = os.path.expanduser("~/.config/team-floor/lanes.json")
-LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so lead-<lane> is a valid Herdr agent name
+LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so <lane>-lead is a valid Herdr agent name
 UNCLEAR = "unclear"
 RESERVED = {UNCLEAR, "started", "misc"}  # Jev's escape hatch, the queue's own folder, and Team Floor's catch-all row
 ROUTE_AT, CONFIRM_AT = 0.60, 0.40
@@ -117,6 +117,21 @@ def error_code(error):
         return json.loads(str(error)).get("error", {}).get("code")
     except (ValueError, AttributeError):
         return None
+
+
+def lead_names(lane_id):
+    """A lane lead's name, then the name leads had before the rename, which still leads its lane until it hands back."""
+    return f"{lane_id}-lead", f"lead-{lane_id}"
+
+
+def lane_lead(lane_id):
+    """The lane's live lead agent and its name, or None and the name a new lead gets."""
+    names = lead_names(lane_id)
+    for lead in names:
+        agent = agent_named(lead)
+        if agent:
+            return agent, lead
+    return None, names[0]
 
 
 def agent_named(name):
@@ -186,11 +201,15 @@ def available_mb():
         return pages * page // 2**20
 
 
+def labelled_panes(*labels):
+    """The panes of tabs whose label ends with one of `labels`."""
+    tabs = {tab["tab_id"] for tab in herdr("tab", "list")["tabs"] if (tab.get("label") or "").endswith(labels)}
+    return [pane for pane in herdr("pane", "list")["panes"] if pane["tab_id"] in tabs] if tabs else []
+
+
 def crowned_panes():
     """The panes of tabs that still wear the crown: where the orchestrator lives, or lived."""
-    tabs = herdr("tab", "list")["tabs"]
-    crowned = {tab["tab_id"] for tab in tabs if (tab.get("label") or "").endswith(LABEL)}
-    return [pane for pane in herdr("pane", "list")["panes"] if pane["tab_id"] in crowned]
+    return labelled_panes(LABEL)
 
 
 def bare_shell(pane):
@@ -374,7 +393,7 @@ def next_brief(*args):
             except LanesUnreadable as error:  # an optional, shared file mustn't stop the main queue
                 print(f"fleet: {error}; skipping lane queues", file=sys.stderr)
                 lanes = []
-            folders += [os.path.join(QUEUE, ln["id"]) for ln in lanes if not agent_named(f"lead-{ln['id']}")]
+            folders += [os.path.join(QUEUE, ln["id"]) for ln in lanes if not lane_lead(ln["id"])[0]]
         queued = sorted((brief, folder) for folder in folders for brief in briefs_in(folder))
         if not queued:
             print("fleet: queue empty")
@@ -384,12 +403,13 @@ def next_brief(*args):
         path = os.path.join(folder, brief)
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
+        supervisor = lane_lead(lane)[1] if lane else NAME
         if lane:
-            text += LANE_NOTE.format(lane=lane, lead=f"lead-{lane}")
+            text += LANE_NOTE.format(lane=lane, lead=supervisor)
         pane = start_session(name)
         if not pane:
             return 3
-        group_session(name, f"lead-{lane}" if lane else NAME)
+        group_session(name, supervisor)
         prompt_when_ready(name, text)
         os.makedirs(os.path.join(folder, "started"), exist_ok=True)
         os.rename(path, os.path.join(folder, "started", brief))
@@ -638,23 +658,20 @@ def lane_items(lane_id):
     return queued, sessions
 
 
-def lost_lead(lead):
-    """A tab that still reads as the lead's and runs an agent, though no agent has the lead's name."""
-    label = f"{LEAD} {lead}"
-    tabs = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if (t.get("label") or "").endswith(label)}
-    if not tabs:
-        return None
-    return next((p["tab_id"] for p in herdr("pane", "list")["panes"] if p["tab_id"] in tabs and p.get("agent")), None)
+def lost_lead(lane_id):
+    """A tab that still reads as the lane lead's and runs an agent, though no agent has the lead's name."""
+    labels = [f"{LEAD} {lead}" for lead in lead_names(lane_id)]
+    return next((p["tab_id"] for p in labelled_panes(*labels) if p.get("agent")), None)
 
 
 def survey(lane):
     """One line about a lane, and whether it needs a lead. Asks a quiet lane's lead, once, to hand it back."""
-    lane_id, lead = lane["id"], f"lead-{lane['id']}"
+    lane_id = lane["id"]
     queued, sessions = lane_items(lane_id)
     count = len(queued) + len(sessions)
     line = f"{lane_id}: {len(queued)} queued, {len(sessions)} open"
     asked = os.path.join(QUEUE, lane_id, ".handback-asked")
-    agent = agent_named(lead)
+    agent, lead = lane_lead(lane_id)
     if not agent:
         return (line, True) if count >= LEAD_AT else (f"{line}; no lead", False)
     if count > HANDBACK_AT:  # busy again: ask afresh the next time it's quiet
@@ -680,14 +697,15 @@ def start_lead(lane, message=None):
     Returns an exit code (0 started or already running, 1 a stray lead tab, 3 short of memory) and what happened."""
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
-    lane_id, lead = lane["id"], f"lead-{lane['id']}"
-    label = f"{LEAD} {lead}"
+    lane_id = lane["id"]
     with locked(os.path.join(QUEUE, lane_id), ".lead.lock"):
-        if agent_named(lead):
+        agent, lead = lane_lead(lane_id)
+        if agent:
             return 0, f"{lead} is already running, so none started"
-        stray = lost_lead(lead)
+        stray = lost_lead(lane_id)
         if stray:
-            return 1, f"tab {stray} reads {label} but lost the name, so no second lead starts"
+            return 1, f"tab {stray} reads as the {lane_id} lead's but lost the name, so no second lead starts"
+        label = f"{LEAD} {lead}"
         pane = start_session(lead, label)
         if not pane:
             return 3, f"{lead} waits for memory"
@@ -766,8 +784,8 @@ def handback(lane_id=None):
     if not lane_id or not LANE_ID.fullmatch(lane_id):
         print("usage: herdr-orchestrator handback <lane>", file=sys.stderr)
         return 2
-    lead = f"lead-{lane_id}"
-    agent = agent_named(lead)
+    agent, lead = lane_lead(lane_id)
+    ex = f"ex-{lead_names(lane_id)[0]}"
     if not agent or agent["pane_id"] != me:
         print(f"only {lead} hands lane {lane_id} back, from its own pane", file=sys.stderr)
         return 2
@@ -779,7 +797,7 @@ def handback(lane_id=None):
         # The tab first: a tab that still reads as the lead's, with nobody holding the name, would stop
         # any new lead for the lane. herdr-tab keeps the status and any ask.
         try:
-            renamed = subprocess.run([TAB, "name", f"💤 ex-{lead}"], capture_output=True, text=True, timeout=30)
+            renamed = subprocess.run([TAB, "name", f"💤 {ex}"], capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as error:
             renamed = subprocess.CompletedProcess([], 1, "", str(error))
         if renamed.returncode != 0:
@@ -788,7 +806,7 @@ def handback(lane_id=None):
         herdr("agent", "rename", me, "--clear")
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
-    type_into(me, f"/rename ex-{lead}")
+    type_into(me, f"/rename {ex}")
     left = ", ".join(queued + sessions) or "nothing"
     if live():
         for session in sessions:
