@@ -57,8 +57,9 @@ task. Rename its Herdr agent and send a self-contained brief. For a new Codex
 worker, use the skill's `--kind codex` recipe. The Claude
 `herdr-orchestrator next` runner starts Claude sessions; it is not a Codex launcher.
 
-Right after you merge a worker's PR, send that worker `merged <repo>#<number>`
-with `herdr agent prompt` (SendMessage for a Claude worker). Every brief states
+Right after you merge a worker's PR, send that worker
+`Status from orchestrator: merged <repo>#<number>` with `herdr agent prompt`
+(SendMessage for a Claude worker), and tell any session waiting on that ticket. Every brief states
 the worker rule: stop at CI green, never merge, and on `merged <PR>` report END
 and keep the tab 🧹.
 
