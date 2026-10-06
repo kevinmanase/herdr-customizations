@@ -106,7 +106,8 @@ CHAT_NOTE = (
     "first:\n\n" + KEVINS_MESSAGE
 )
 CHAT_AGENT = "chat-agent"
-CHAT_LABEL = f"💬 {CHAT_AGENT}"
+CHAT_MARK = "💬"
+CHAT_LABEL = f"{CHAT_MARK} {CHAT_AGENT}"
 CHAT_BRIEF = (
     f"You are {CHAT_AGENT}, this machine's agent for the team floor's chat. Kevin talks to you from "
     "the chat; each of his messages is typed into this session. Load the `herdr` skill and follow its "
@@ -682,9 +683,8 @@ def lane_items(lane_id):
     return queued, sessions
 
 
-def lost_lead(lane_id):
-    """A tab that still reads as the lane lead's and runs an agent, though no agent has the lead's name."""
-    labels = [f"{LEAD} {lead}" for lead in lead_names(lane_id)]
+def stray_tab(*labels):
+    """A tab that still reads as one of `labels` and runs an agent, though no agent has the name in it."""
     return next((p["tab_id"] for p in labelled_panes(*labels) if p.get("agent")), None)
 
 
@@ -716,47 +716,59 @@ def survey(lane):
     return f"{line}; asked {lead} to hand it back", False
 
 
+def start_once(lock, mark, names, brief):
+    """Start a session named names[0], in a tab labelled `<mark> <name>`, with `brief` as its one first prompt,
+    unless an agent holds one of `names` or a tab with one of their labels lost its name.
+    Returns an exit code (0 started or already running, 1 a stray tab, 3 short of memory), what happened, and
+    whether it started one."""
+    name, labels = names[0], [f"{mark} {held}" for held in names]
+    with lock:
+        held = next((held for held in names if agent_named(held)), None)
+        if held:
+            return 0, f"{held} is already running, so none started", False
+        stray = stray_tab(*labels)
+        if stray:
+            return 1, f"tab {stray} reads as {name}'s but lost the name, so no second one starts", False
+        pane = start_session(name, labels[0])
+        if not pane:
+            return 3, f"{name} waits for memory", False
+        try:
+            prompt_when_ready(name, brief)
+        except RuntimeError as error:
+            raise RuntimeError(f"{name} started in pane {pane} but didn't get its brief: {error}") from None
+    return 0, f"started {name} in pane {pane}", True
+
+
 def start_lead(lane, message=None):
     """Start a lane's lead unless it has one, with `message` from the owner appended to its brief.
-    Returns an exit code (0 started or already running, 1 a stray lead tab, 3 short of memory) and what happened."""
+    Returns start_once's exit code and what happened."""
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
     lane_id = lane["id"]
-    with locked(os.path.join(QUEUE, lane_id), ".lead.lock"):
-        agent, lead = lane_lead(lane_id)
-        if agent:
-            return 0, f"{lead} is already running, so none started"
-        stray = lost_lead(lane_id)
-        if stray:
-            return 1, f"tab {stray} reads as the {lane_id} lead's but lost the name, so no second lead starts"
-        label = f"{LEAD} {lead}"
-        pane = start_session(lead, label)
-        if not pane:
-            return 3, f"{lead} waits for memory"
+    names = lead_names(lane_id)
+    lead = names[0]
+    brief = LEAD_BRIEF.format(
+        lead=lead,
+        name=lane.get("name") or lane_id,
+        about=lane.get("about") or lane.get("name") or lane_id,
+        label=f"{LEAD} {lead}",
+        queue=os.path.join(QUEUE, lane_id),
+        lane=lane_id,
+        handback=HANDBACK_AT,
+    )
+    if message:
+        brief += CHAT_NOTE.format(text=message)
+    code, line, started = start_once(locked(os.path.join(QUEUE, lane_id), ".lead.lock"), LEAD, names, brief)
+    if started:
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
-        brief = LEAD_BRIEF.format(
-            lead=lead,
-            name=lane.get("name") or lane_id,
-            about=lane.get("about") or lane.get("name") or lane_id,
-            label=label,
-            queue=os.path.join(QUEUE, lane_id),
-            lane=lane_id,
-            handback=HANDBACK_AT,
-        )
-        if message:
-            brief += CHAT_NOTE.format(text=message)
-        try:
-            prompt_when_ready(lead, brief)
-        except RuntimeError as error:
-            raise RuntimeError(f"{lead} started in pane {pane} but didn't get its brief: {error}") from None
         if group_session(lead, NAME):
             try:
                 for session in lane_items(lane_id)[1]:
                     group_session(session, lead)
             except RuntimeError as error:
                 print(f"fleet: grouping {lead}'s workers failed: {error}", file=sys.stderr)
-    return 0, f"started {lead} in pane {pane}"
+    return code, line
 
 
 def leads():
@@ -822,24 +834,11 @@ def chat_agent(flag=None, path=None):
     message = owner_message(CHAT_AGENT, path)
     if not message:
         return 2
-    with locked(QUEUE, ".chat-agent.lock"):
-        if agent_named(CHAT_AGENT):
-            print(f"{CHAT_AGENT} is already running, so none started")
-            return 0
-        stray = next((p["tab_id"] for p in labelled_panes(CHAT_LABEL) if p.get("agent")), None)
-        if stray:
-            print(f"tab {stray} reads as {CHAT_AGENT}'s but lost the name, so no second one starts")
-            return 1
-        pane = start_session(CHAT_AGENT, CHAT_LABEL)
-        if not pane:
-            print(f"{CHAT_AGENT} waits for memory")
-            return 3
-        try:
-            prompt_when_ready(CHAT_AGENT, CHAT_BRIEF.format(text=message))
-        except RuntimeError as error:
-            raise RuntimeError(f"{CHAT_AGENT} started in pane {pane} but didn't get its brief: {error}") from None
-    print(f"started {CHAT_AGENT} in pane {pane}")
-    return 0
+    code, line, _ = start_once(
+        locked(QUEUE, ".chat-agent.lock"), CHAT_MARK, (CHAT_AGENT,), CHAT_BRIEF.format(text=message)
+    )
+    print(line)
+    return code
 
 
 def handback(lane_id=None):

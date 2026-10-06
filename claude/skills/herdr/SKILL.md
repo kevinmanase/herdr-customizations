@@ -173,7 +173,7 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - When you merge a worker's PR, send that worker `merged <repo>#<number>`, as the orchestrator does.
 - When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy, and keeps you the lead if it can't rename your tab. Afterwards, leave your conversation open.
 
-### The chat agent (💬)
+### Chat agent (💬)
 
 Each machine can run one chat agent: a Claude session named `chat-agent`, in a tab that reads `💬 chat-agent`, that talks with Kevin in the team floor's chat.
 

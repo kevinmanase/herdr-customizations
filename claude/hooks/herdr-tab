@@ -163,14 +163,14 @@ def unnamed(name):
 
 def reclaim_name(name):
     """If this pane's tab (named `name`) is a lane lead's and the lane has no lead under either name, or the
-    chat agent's and nobody has its name, take the tab's name: the name, or None."""
+    chat agent's and nobody has its name, take the tab's name: the name, the role and its skill section, or None."""
     try:
         match = LEAD_LABEL.fullmatch(name)
         if match:
             lane = match[1] or match[2]
-            names = (f"{lane}-lead", f"lead-{lane}")
+            names, role = (f"{lane}-lead", f"lead-{lane}"), ("a lane lead", "Lane leads")
         elif name == CHAT_LABEL:
-            names = ("chat-agent",)
+            names, role = (name.split(" ", 1)[1],), ("the team floor's chat agent", "Chat agent")
         else:
             return None
         if not all(map(unnamed, names)):
@@ -180,7 +180,7 @@ def reclaim_name(name):
         time.sleep(1)
         taken = name.split(" ", 1)[1]
         if all(map(unnamed, names)) and take_name(taken):
-            return taken
+            return taken, *role
     except Exception:
         pass
     return None
@@ -631,11 +631,9 @@ def hook(event):
                 " A restart cleared this pane's Herdr name. This tab still wears the crown, so the hook "
                 "gave the name back: you are still the orchestrator."
             )
-        taken = not mine and payload.get("source") != "clear" and reclaim_name(name)
-        if taken:
-            role, section = (
-                ("the team floor's chat agent", "Chat agent") if name == CHAT_LABEL else ("a lane lead", "Lane leads")
-            )
+        role = not mine and payload.get("source") != "clear" and reclaim_name(name)
+        if role:
+            taken, role, section = role
             context += (
                 f" This tab reads as {taken}'s and its pane had no Herdr name, so the hook gave it that name: "
                 f"you are {taken}, {role}. Follow the `herdr` skill's {section} section."

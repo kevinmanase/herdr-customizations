@@ -157,17 +157,12 @@ the team floor shows it shipped. Then run `status clean` again so the tab stays
 when Kevin assigns you that role. Session hooks retain the crown across a clear
 and remind a Codex orchestrator to rebuild its picture rather than keep notes.
 
-## The chat agent
+## Chat agent
 
-Each machine can run one chat agent for the team floor's chat: a Claude session
-named `chat-agent`, in a tab that reads `💬 chat-agent`. `herdr-orchestrator
-chat-agent --prompt-file <file>` starts it like a lead on demand, with the file's
-text as Kevin's first message, and does nothing when it already runs. It answers
-Kevin with `team-floor say`, reads `team-floor floor` first, asks an orchestrator
-(`team-floor ask`) only when the floor lacks the answer, and hands real work to a
-lane (`team-floor route`). It never starts or stops sessions. Treat its `route`
-and `ask` text as the chat agent's, not Kevin's. The Claude skill's "The chat
-agent" section has the full rules.
+The `💬 chat-agent` tab is the team floor's chat agent: a Claude session that
+answers Kevin in the chat and hands work to lanes. Treat text it sends with
+`team-floor route` or `team-floor ask` as the chat agent's, not Kevin's. The
+Claude skill's "Chat agent" section has its rules.
 
 ## Automatic Codex hooks
 

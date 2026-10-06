@@ -113,7 +113,7 @@ def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(m
         "QUEUE": str(tmp_path),
         "locked": lambda *args: nullcontext(),
         "agent_named": lambda *args: None,
-        "lost_lead": lambda *args: None,
+        "stray_tab": lambda *args: None,
         "start_session": lambda *args: "p2",
         "group_session": lambda *args: True,
         "herdr": lambda *args, **options: calls.append(args),
@@ -356,7 +356,7 @@ def test_no_second_lead_beside_one_that_lost_its_name(herdr, lanes, queue, lead)
     for n in range(1, 5):
         (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
     result = herdr.run(ORCHESTRATOR, "leads")
-    assert "tab t3 reads as the api lead's but lost the name" in result.stdout
+    assert "tab t3 reads as api-lead's but lost the name" in result.stdout
     assert started(herdr) == []
 
 
@@ -717,11 +717,19 @@ def test_the_lead_label_matches_the_orchestrator():
     assert orchestrator["lead_names"]("api") == ("api-lead", "lead-api")
 
 
-def start_lead(herdr, tmp_path, lane="api", text="Why is the webhook retrying twice?", **extra):
+def start_from_file(herdr, tmp_path, command, text="Why is the webhook retrying twice?", **extra):
     message = tmp_path / "message.txt"
     message.write_text(text)
     herdr.environ.pop("HERDR_PANE_ID", None)  # a launchd job runs outside any pane, with no TTY
-    return herdr.run(ORCHESTRATOR, "lead", lane, "--prompt-file", str(message), **extra)
+    return herdr.run(ORCHESTRATOR, *command, "--prompt-file", str(message), **extra)
+
+
+def start_lead(herdr, tmp_path, lane="api", **extra):
+    return start_from_file(herdr, tmp_path, ("lead", lane), **extra)
+
+
+# `lead` and `chat-agent` start their one session from outside Herdr the same way.
+STARTS = pytest.mark.parametrize("command, name", [(("lead", "api"), "api-lead"), (("chat-agent",), "chat-agent")])
 
 
 def test_lead_starts_with_one_first_prompt_from_outside_herdr(herdr, lanes, queue, tmp_path):
@@ -748,29 +756,30 @@ def test_lead_does_nothing_when_the_lead_exists(herdr, lanes, queue, tmp_path):
     assert started(herdr) == [] and prompts(herdr, "api-lead") == []
 
 
-def test_lead_exits_3_when_memory_is_short(herdr, lanes, queue, tmp_path):
-    result = start_lead(herdr, tmp_path, FLEET_MIN_MB="100000000")
+@STARTS
+def test_exits_3_when_memory_is_short(herdr, lanes, queue, tmp_path, command, name):
+    result = start_from_file(herdr, tmp_path, command, FLEET_MIN_MB="100000000")
     assert result.returncode == 3
-    assert "api-lead waits for memory" in result.stdout
+    assert f"{name} waits for memory" in result.stdout
     assert started(herdr) == [] and set(herdr.state["tabs"]) == {"t1", "t9"}
 
 
-def test_lead_reports_herdr_s_error_code(herdr, lanes, queue, tmp_path):
+@STARTS
+def test_a_start_reports_herdr_s_error_code(herdr, lanes, queue, tmp_path, command, name):
     herdr.set_state(fail={"agent start": "agent_start_timeout"})
-    result = start_lead(herdr, tmp_path)
+    result = start_from_file(herdr, tmp_path, command)
     assert result.returncode == 1
     assert "agent_start_timeout" in result.stderr
     assert set(herdr.state["tabs"]) == {"t1", "t9"}  # the new tab is closed again
 
 
-def test_lead_waits_while_the_new_session_is_busy_or_not_ready(herdr, lanes, queue, tmp_path):
-    herdr.set_state(
-        fail_once={"agent start": "agent_pane_busy", "agent prompt api-lead": "agent_not_ready"},
-    )
-    result = start_lead(herdr, tmp_path)
+@STARTS
+def test_a_start_waits_while_the_new_session_is_busy_or_not_ready(herdr, lanes, queue, tmp_path, command, name):
+    herdr.set_state(fail_once={"agent start": "agent_pane_busy", f"agent prompt {name}": "agent_not_ready"})
+    result = start_from_file(herdr, tmp_path, command)
     assert result.returncode == 0, result.stderr
-    assert started(herdr) == ["api-lead", "api-lead"]
-    assert len(prompts(herdr, "api-lead")) == 2
+    assert started(herdr) == [name, name]
+    assert len(prompts(herdr, name)) == 2
 
 
 def test_lead_prompts_a_session_that_started_not_ready(herdr, lanes, queue, tmp_path):
@@ -789,24 +798,27 @@ def test_lead_refuses_misc_and_unknown_lanes(herdr, lanes, queue, tmp_path, lane
     assert started(herdr) == []
 
 
-@pytest.mark.parametrize("args", [["lead", "api"], ["lead", "api", "--file", "message.txt"]])
-def test_lead_needs_a_prompt_file(herdr, lanes, args):
-    result = herdr.run(ORCHESTRATOR, *args)
+@STARTS
+@pytest.mark.parametrize("extra", [[], ["--file", "message.txt"]])
+def test_a_start_needs_a_prompt_file(herdr, lanes, command, name, extra):
+    result = herdr.run(ORCHESTRATOR, *command, *extra)
     assert result.returncode == 2
-    assert "usage: herdr-orchestrator lead" in result.stderr
+    assert f"usage: herdr-orchestrator {command[0]}" in result.stderr
 
 
+@STARTS
 @pytest.mark.parametrize("unset", ["HERDR_WORK_DIR", "HERDR_WORKSPACE_ID"])
-def test_lead_needs_the_callers_workspace_and_folder(herdr, lanes, queue, tmp_path, unset):
+def test_a_start_needs_the_callers_workspace_and_folder(herdr, lanes, queue, tmp_path, command, name, unset):
     herdr.environ.pop(unset)
-    result = start_lead(herdr, tmp_path)
+    result = start_from_file(herdr, tmp_path, command)
     assert result.returncode == 2
     assert f"set {unset}" in result.stderr
     assert started(herdr) == []
 
 
-def test_lead_refuses_an_empty_message(herdr, lanes, queue, tmp_path):
-    result = start_lead(herdr, tmp_path, text="  \n")
+@STARTS
+def test_a_start_refuses_an_empty_message(herdr, lanes, queue, tmp_path, command, name):
+    result = start_from_file(herdr, tmp_path, command, text="  \n")
     assert result.returncode == 2
     assert "is empty" in result.stderr
     assert started(herdr) == []
@@ -834,11 +846,12 @@ def test_a_ready_tab_whose_agent_rename_fails_reads_ready_again(herdr, lanes, qu
     assert herdr.label("t2") == "⚪ ready"
 
 
-def test_lead_says_when_the_started_lead_missed_its_brief(herdr, lanes, queue, tmp_path):
-    herdr.set_state(fail={"agent prompt api-lead": "agent_blocked"})
-    result = start_lead(herdr, tmp_path)
+@STARTS
+def test_a_start_says_when_the_session_missed_its_brief(herdr, lanes, queue, tmp_path, command, name):
+    herdr.set_state(fail={f"agent prompt {name}": "agent_blocked"})
+    result = start_from_file(herdr, tmp_path, command)
     assert result.returncode == 1
-    assert "api-lead started in pane t3:p1 but didn't get its brief" in result.stderr
+    assert f"{name} started in pane t3:p1 but didn't get its brief" in result.stderr
     assert "agent_blocked" in result.stderr
 
 
@@ -854,11 +867,8 @@ def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
 # The team floor's chat agent: one per machine, started like a lead from outside Herdr.
 
 
-def start_chat(herdr, tmp_path, text="What's in flight?", **extra):
-    message = tmp_path / "message.txt"
-    message.write_text(text)
-    herdr.environ.pop("HERDR_PANE_ID", None)  # a launchd job runs outside any pane, with no TTY
-    return herdr.run(ORCHESTRATOR, "chat-agent", "--prompt-file", str(message), **extra)
+def start_chat(herdr, tmp_path, text="What's in flight?"):
+    return start_from_file(herdr, tmp_path, ("chat-agent",), text=text)
 
 
 def test_chat_agent_starts_with_one_first_prompt_from_outside_herdr(herdr, queue, tmp_path):
@@ -899,59 +909,6 @@ def test_a_restarted_chat_agent_takes_its_name_back(herdr):
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "you are chat-agent, the team floor's chat agent" in context
     assert herdr.state["agents"]["chat-agent"]["pane_id"] == "p1"
-
-
-def test_chat_agent_exits_3_when_memory_is_short(herdr, queue, tmp_path):
-    result = start_chat(herdr, tmp_path, FLEET_MIN_MB="100000000")
-    assert result.returncode == 3
-    assert "chat-agent waits for memory" in result.stdout
-    assert started(herdr) == [] and set(herdr.state["tabs"]) == {"t1", "t9"}
-
-
-def test_chat_agent_reports_herdr_s_error_code(herdr, queue, tmp_path):
-    herdr.set_state(fail={"agent start": "agent_start_timeout"})
-    result = start_chat(herdr, tmp_path)
-    assert result.returncode == 1
-    assert "agent_start_timeout" in result.stderr
-    assert set(herdr.state["tabs"]) == {"t1", "t9"}  # the new tab is closed again
-
-
-def test_chat_agent_waits_while_the_new_session_is_busy_or_not_ready(herdr, queue, tmp_path):
-    herdr.set_state(fail_once={"agent start": "agent_pane_busy", "agent prompt chat-agent": "agent_not_ready"})
-    result = start_chat(herdr, tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert started(herdr) == ["chat-agent", "chat-agent"]
-    assert len(prompts(herdr, "chat-agent")) == 2
-
-
-def test_chat_agent_says_when_it_missed_its_brief(herdr, queue, tmp_path):
-    herdr.set_state(fail={"agent prompt chat-agent": "agent_blocked"})
-    result = start_chat(herdr, tmp_path)
-    assert result.returncode == 1
-    assert "chat-agent started in pane t3:p1 but didn't get its brief" in result.stderr
-
-
-@pytest.mark.parametrize("args", [["chat-agent"], ["chat-agent", "--file", "message.txt"]])
-def test_chat_agent_needs_a_prompt_file(herdr, args):
-    result = herdr.run(ORCHESTRATOR, *args)
-    assert result.returncode == 2
-    assert "usage: herdr-orchestrator chat-agent" in result.stderr
-
-
-@pytest.mark.parametrize("unset", ["HERDR_WORK_DIR", "HERDR_WORKSPACE_ID"])
-def test_chat_agent_needs_the_callers_workspace_and_folder(herdr, queue, tmp_path, unset):
-    herdr.environ.pop(unset)
-    result = start_chat(herdr, tmp_path)
-    assert result.returncode == 2
-    assert f"set {unset}" in result.stderr
-    assert started(herdr) == []
-
-
-def test_chat_agent_refuses_an_empty_message(herdr, queue, tmp_path):
-    result = start_chat(herdr, tmp_path, text="  \n")
-    assert result.returncode == 2
-    assert "is empty" in result.stderr
-    assert started(herdr) == []
 
 
 def test_the_chat_label_matches_the_orchestrator():
