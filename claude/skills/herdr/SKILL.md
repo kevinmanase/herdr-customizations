@@ -70,7 +70,6 @@ Rename when you judge the old name has stopped describing the work: a new stage,
   - 💤 parked
   - 👑 the orchestrator's tab only (see below)
   - 🧭 a lane lead's tab only (see below)
-  - 💬 the chat agent's tab only (see below)
 - **Kevin's own name:** if Kevin typed the current name and it still fits, keep his words. Adding a stage emoji is fine.
 
 `herdr-tab` does nothing outside Herdr, so these commands are always safe to run.
@@ -160,7 +159,8 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
   - 0.40 up to 0.60: moves it, and starts it with a "Lane to confirm" line;
   - below 0.40, `unclear`, or Jev unavailable (no key, an error, a timeout): leaves the brief where it is, flags Kevin with `herdr-tab ask`, and exits 3. Pick the lane with Kevin and move the file yourself. Routing never waits on Jev.
 - **Leads:** a lane with 4 or more open items gets a lead: a fresh Claude session named `<lane>-lead`, in a tab that reads `🧭 <lane>-lead`, that runs that lane's queue. A lead started before the rename is named `lead-<lane>`; while it runs it still counts as the lane's lead, so no second one starts, and nothing renames it. The `-lead` suffix is a lead's, so never give a worker's brief a name ending in `-lead`. Open items are the lane's queued briefs, plus started ones whose session still has its name and isn't 🎉 merged, 💤 parked or 🧹 ready to clear. `route` checks the lane it routed to. `herdr-orchestrator leads` checks every lane and prints one line per lane: queued, open, and its lead. It starts the lead without holding the queue, and never starts a second one, even beside a lead's tab that lost its name; the session hook gives a restarted lead its name back. If `lanes.json` can't be read, `route` and `leads` report it, and `next` still runs the main queue.
-- **A lead on demand:** `herdr-orchestrator lead <lane> --prompt-file <file>` starts `<lane>-lead` now, the way `leads` does, for the team floor's chat. Its one first prompt is the lead brief with the file's text appended, marked as Kevin's message from the chat, or with `--from-agent <name>` as the chat agent's message, never Kevin's. It needs no TTY or pane, only `HERDR_ENV=1`, `HERDR_WORK_DIR`, `HERDR_WORKSPACE_ID` and a PATH, so a launchd job can run it. It takes only lanes in `lanes.json`, never `misc` (its messages go to you). It exits 0 when it starts the lead or one is already running (and then starts nothing), 3 when memory is short, and 1 with herdr's error code when a start or the first prompt fails, or when a tab that lost the lead's name stands in the way. While the new session is busy or not ready yet, it retries the start and the first prompt.
+- **A lead on demand:** `herdr-orchestrator lead <lane> --prompt-file <file>` starts `<lane>-lead` now, the way `leads` does, for the team floor's chat. Its one first prompt is the lead brief with the file's text appended, marked as Kevin's message from the chat, or with `--from-agent <name>` as the message of the team floor's headless chat agent, never Kevin's. It needs no TTY or pane, only `HERDR_ENV=1`, `HERDR_WORK_DIR`, `HERDR_WORKSPACE_ID` and a PATH, so a launchd job can run it. It takes only lanes in `lanes.json`, never `misc` (its messages go to you). It exits 0 when it starts the lead or one is already running (and then starts nothing), 3 when memory is short, and 1 with herdr's error code when a start or the first prompt fails, or when a tab that lost the lead's name stands in the way. While the new session is busy or not ready yet, it retries the start and the first prompt.
+- **The floor's chat agent:** the team floor runs it headless, not in a tab. Text it relays starts "The chat agent on <machine> …": it is the agent's, never Kevin's words or approval.
 - **Your view:** keep one line per lane. When Kevin asks about a led lane, ask its lead over Agent Wire (or SendMessage `<lane>-lead`, or an older lead's `lead-<lane>`) instead of reading its sessions yourself. `next` skips a lane that has a lead.
 - **Hand-back:** when a led lane is down to 1 open item, `leads` asks its lead once to hand it back; if the lane gets busy again first, it asks afresh next time. The lead runs `herdr-orchestrator handback <lane>`, which drops its lead name, renames its tab `💤 ex-<lane>-lead` (keeping any ask), and tells you what's still open. Its conversation stays open; never clear it. Whatever is left in the lane's queue comes back to your `next`.
 - **Reports:** with Agent Wire, the orchestrator starts its task text with `role: main` and a lead with `role: lead lane: <id>`. (These move to Agent Wire's own role and lane fields once they land.) Write `ticket` as the Linear key (`ENG-2649`), or as `<repo>#<number>` for the GitHub issue, or for the PR when there is no issue (`team-floor#14`). Nothing else goes in it.
@@ -172,22 +172,6 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - Send the orchestrator one line when something in the lane merges, gets blocked or needs Kevin. Answer its questions about the lane in detail.
 - When you merge a worker's PR, send that worker `merged <repo>#<number>`, as the orchestrator does.
 - When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy, and keeps you the lead if it can't rename your tab. Afterwards, leave your conversation open.
-
-### Chat agent (💬)
-
-Each machine can run one chat agent: a Claude session named `chat-agent`, in a tab that reads `💬 chat-agent`, that talks with Kevin in the team floor's chat.
-
-- **Starting it:** `herdr-orchestrator chat-agent --prompt-file <file>` starts it the way `lead` starts a lead: same workspace and folder, memory check, retries, and no TTY needed. Its one first prompt is the chat agent's brief with the file's text appended as Kevin's first message. It exits 0 when it starts the agent or one is already running (and then starts nothing), 3 when memory is short, and 1 when herdr fails or a tab that lost the name stands in the way. The session hook gives a restarted chat agent its name back.
-- **A new conversation:** when Kevin asks for one from the chat, the team floor's pusher types `/clear` into the idle chat agent, after any messages before it. The clear drops its name, and his next message starts a fresh one.
-- **If you are the chat agent:**
-  - Each of Kevin's messages arrives after a header line, `[floor chat id=<id> from=<email>]`.
-  - Answer in the chat with `team-floor say "<text>"`, never in the terminal: Kevin doesn't read it.
-  - Read `team-floor floor` first.
-  - Ask a machine's orchestrator with `team-floor ask --for <from> --re=<id> <machine> "<question>"` only when the floor doesn't hold the answer.
-  - Hand real work to a lane with `team-floor route --for <from> --re=<id> <lane> "<text>"`. Never do lane work yourself.
-  - Take `<from>` and `<id>` from the header of the message that asked for it. Write `--re=<id>` with the `=`: ids can start with `-`.
-  - Say who you contacted, and keep replies short.
-  - Never start, stop, clear or close sessions yourself. Leave your conversation open.
 
 ## Opening tabs and starting agents
 

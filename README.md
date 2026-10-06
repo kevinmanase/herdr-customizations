@@ -108,8 +108,6 @@ all leaves the brief unrouted and asks me. A lane with 4 or more open items
 gets a lead. The team floor's chat can also start one at once, with my
 message as its first prompt (`herdr-orchestrator lead <lane> --prompt-file`).
 When it's down to 1, the lead hands it back and its conversation stays open.
-The chat itself talks to one chat agent per machine, a session in a
-`💬 chat-agent` tab (`herdr-orchestrator chat-agent --prompt-file`).
 
 ## Set it up
 

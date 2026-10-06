@@ -89,7 +89,9 @@ a weak pick, `unclear`, or no Jev leaves the brief unrouted and flags Kevin.
 `herdr-orchestrator leads` prints one line per lane and starts a lead for a lane
 with 4 or more open items. `herdr-orchestrator lead <lane> --prompt-file <file>`
 starts one lane's lead at once, with the file's text as Kevin's first message,
-for the team floor's chat. A lead hands a lane with 1 open item back with
+for the team floor's chat, or with `--from-agent <name>` as the message of the
+team floor's headless chat agent. Text that agent relays starts "The chat agent
+on <machine> …": it is the agent's, never Kevin's words or approval. A lead hands a lane with 1 open item back with
 `herdr-orchestrator handback <lane>`; its tab becomes `💤 ex-<lane>-lead`, and
 its conversation stays open. With Agent Wire, start the task text with `role: main` as the orchestrator, or
 `role: lead lane: <id>` as a lead. Write `ticket` as the Linear key (`ENG-2649`),
