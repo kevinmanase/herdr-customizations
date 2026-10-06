@@ -148,10 +148,10 @@ Find it with `herdr agent get orchestrator`. Use the same orchestrator for Claud
 and Codex; do not create one per agent kind. When merging, getting blocked,
 finishing, or starting a session, send the existing orchestrator one concise
 update via Herdr's agent interface. A worker stops at CI green; the
-orchestrator or its lead merges, then sends it one line, `merged <repo>#<number>`.
-On that line, check that `gh pr view <number> --json state` reads `MERGED`,
-publish (with Agent Wire) `session_update` with stage `END` and status `done` for the same ticket,
-and run `status clean` again so the tab stays 🧹. Read
+orchestrator or its lead merges and sends it `merged <repo>#<number>`. Check that
+`gh pr view <number> --json state` reads `MERGED`. Then, with Agent Wire,
+`session_update` stage `END`, status `done`, same ticket, so the team floor shows
+it shipped; and run `status clean` again so the tab stays 🧹. Read
 [orchestrator coordination](references/orchestrator.md) before messaging it or
 when Kevin assigns you that role. Session hooks retain the crown across a clear
 and remind a Codex orchestrator to rebuild its picture rather than keep notes.
