@@ -102,8 +102,9 @@ Jev picks a brief's lane; fixed rules decide what to do with the pick. A
 sure pick (0.60 or more) routes the brief. A middling one (0.40 to 0.60)
 routes it marked "lane to confirm". Anything weaker, `unclear`, or no Jev at
 all leaves the brief unrouted and asks me. A lane with 4 or more open items
-gets a lead. When it's down to 1, the lead hands it back and its
-conversation stays open.
+gets a lead. The team floor's chat can also start one at once, with my
+message as its first prompt (`herdr-orchestrator lead <lane> --prompt-file`).
+When it's down to 1, the lead hands it back and its conversation stays open.
 
 ## Set it up
 

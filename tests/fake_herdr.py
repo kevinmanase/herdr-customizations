@@ -3,7 +3,8 @@
 
 state["fail"] maps the start of a command ("tab rename") to the error code it fails with, or "raw"
 for an error that isn't JSON; state["fail_once"] does the same for the next matching call only.
-`agent start` records whether the fleet queue's lock was free.
+`agent start` records whether the fleet queue's lock was free. With state["start_not_ready"] it starts the agent
+but answers agent_not_ready once, as Herdr does for a session still at a startup dialog.
 """
 
 import fcntl
@@ -97,6 +98,8 @@ match args:
         pane(pane_id)["agent"] = "claude"
         state.setdefault("queue_lock_free_during_start", []).append(queue_lock_free())
         state.setdefault("agents", {})[name] = {**pane(pane_id), "name": name}
+        if state.pop("start_not_ready", False):
+            done(error="agent_not_ready")
         done({"agent": state["agents"][name]})
     case ["agent" | "notification", *_]:
         done({})
