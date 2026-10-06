@@ -172,13 +172,12 @@ def test_an_ask_sets_both_and_kevins_answer_clears_both(herdr, wire):
 
 
 def test_an_ask_passes_its_options_to_agent_wire_and_the_label_stays(herdr, wire):
-    result = herdr.run(
-        TAB, "ask", "ship today?", "--option", "yes (recommended)", "--option", " no ", CLAUDE_CODE_SESSION_ID="s1"
-    )
+    ask = ["ship", "--option", "yes (recommended)", "--force?", "--option= -f ", "today?"]
+    result = herdr.run(TAB, "ask", *ask, CLAUDE_CODE_SESSION_ID="s1")
     assert result.returncode == 0, result.stderr
-    assert herdr.label() == "❓ ship today? · ready"
-    ask = ("--to", "Kevin", "--text", "ship today?", "--kind", "decide")
-    assert wire.calls == [wire.ask(*ask, "--option", "yes (recommended)", "--option", "no")]
+    assert herdr.label() == "❓ ship --force? today? · ready"  # words that look like flags stay in the question
+    ask = ("--to", "Kevin", "--text", "ship --force? today?", "--kind", "decide")
+    assert wire.calls == [wire.ask(*ask, "--option=yes (recommended)", "--option=-f")]
 
 
 def test_an_agent_wire_without_options_still_gets_the_ask(herdr, wire):
@@ -186,7 +185,7 @@ def test_an_agent_wire_without_options_still_gets_the_ask(herdr, wire):
     result = herdr.run(TAB, "ask", "ship today?", "--option", "yes", "--option", "no", CLAUDE_CODE_SESSION_ID="s1")
     assert (result.returncode, result.stderr) == (0, "")
     ask = wire.ask("--to", "Kevin", "--text", "ship today?", "--kind", "decide")
-    assert wire.calls == [ask + ["--option", "yes", "--option", "no"], ask]
+    assert wire.calls == [ask + ["--option=yes", "--option=no"], ask]
 
 
 @pytest.mark.parametrize("options", [["yes"], ["a", "b", "c", "d", "e"], ["yes", " "], ["yes", "n" * 81]])

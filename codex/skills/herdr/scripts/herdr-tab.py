@@ -219,7 +219,7 @@ def wire_ask(runtime, session, text="", kind="", options=()):
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
     argv = [command, "--state", state, "ask", "--identity", newest[1], *ask]
-    presets = [word for option in options for word in ("--option", option)]
+    presets = [f"--option={option}" for option in options]  # one word each, so "-f" can't read as a flag
     try:
         result = subprocess.run(argv + presets, capture_output=True, text=True, timeout=5)
         if "unrecognized arguments: --option" in result.stderr:  # an agent-wire from before options: ask without them
@@ -609,7 +609,7 @@ def main():
         elif args.command == "name":
             set_name(" ".join(args.text))
         elif args.command in ("ask", "request"):
-            options = check_options(getattr(args, "option", []))
+            options = check_options(args.option) if args.command == "ask" else []
             text = " ".join(args.text)
             needs(QUESTION if args.command == "ask" else REQUEST, text)
             mirror("decide" if args.command == "ask" else "act", text, options)

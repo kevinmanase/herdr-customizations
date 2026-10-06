@@ -346,7 +346,7 @@ def wire_ask(runtime, session, text="", kind="", options=()):
         return ""
     ask = ["--to", "Kevin", "--text", clean(text, 120) or "needs you", "--kind", kind] if kind else ["--clear"]
     argv = [command, "--state", state, "ask", "--identity", newest[1], *ask]
-    presets = [word for option in options for word in ("--option", option)]
+    presets = [f"--option={option}" for option in options]  # one word each, so "-f" can't read as a flag
     try:
         result = subprocess.run(argv + presets, capture_output=True, text=True, timeout=5)
         if "unrecognized arguments: --option" in result.stderr:  # an agent-wire from before options: ask without them
@@ -623,16 +623,17 @@ def main():
     if command == "status" and args[:1] == ["question"]:  # older spelling of `ask`
         command, args = "ask", args[1:] or ["needs you"]
     if command in ("ask", "request") and args:
-        options = []
-        if command == "ask":
-            import argparse
-
-            parser = argparse.ArgumentParser(prog="herdr-tab ask")
-            parser.add_argument("text", nargs="+")
-            parser.add_argument("--option", action="append", default=[])
-            ask = parser.parse_args(args)
-            args, options = ask.text, check_options(ask.option)
-        text = " ".join(args)
+        words, options = [], []
+        rest = iter(args)
+        for word in rest:  # any other word is the ask's text, even one that looks like a flag
+            if command == "ask" and word == "--option":
+                options.append(next(rest, ""))
+            elif command == "ask" and word.startswith("--option="):
+                options.append(word.partition("=")[2])
+            else:
+                words.append(word)
+        options = check_options(options)
+        text = " ".join(words)
         needs("question" if command == "ask" else "request", text)
         mirror("decide" if command == "ask" else "act", text, options)
     elif command == "status" and args:
