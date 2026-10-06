@@ -73,17 +73,19 @@ Inspect actual agent kind before sending product-specific slash commands.
 ## Lanes and leads
 
 If `~/.config/team-floor/lanes.json` lists lanes, a busy lane gets a Claude
-lead named `lead-<lane>` (tab `🧭 lead-<lane>`) that runs
-`~/.cache/herdr-fleet/queue/<lane>/`. The orchestrator keeps one line per lane
-and asks a lead for detail instead of reading its sessions. Route a new brief
+lead named `<lane>-lead` (tab `🧭 <lane>-lead`) that runs
+`~/.cache/herdr-fleet/queue/<lane>/`. A lead started before 2026-10-06 is named
+`lead-<lane>` and still counts as the lane's lead until it hands back. The
+orchestrator keeps one line per lane and asks a lead for detail instead of
+reading its sessions. Route a new brief
 with `~/.claude/hooks/herdr-orchestrator route <brief>`: Jev picks the lane, and
 a weak pick, `unclear`, or no Jev leaves the brief unrouted and flags Kevin.
 `herdr-orchestrator leads` prints one line per lane and starts a lead for a lane
 with 4 or more open items. `herdr-orchestrator lead <lane> --prompt-file <file>`
 starts one lane's lead at once, with the file's text as Kevin's first message,
 for the team floor's chat. A lead hands a lane with 1 open item back with
-`herdr-orchestrator handback <lane>`, and its conversation stays open. With
-Agent Wire, start the task text with `role: main` as the orchestrator, or
+`herdr-orchestrator handback <lane>`; its tab becomes `💤 ex-<lane>-lead`, and
+its conversation stays open. With Agent Wire, start the task text with `role: main` as the orchestrator, or
 `role: lead lane: <id>` as a lead. Write `ticket` as the Linear key (`ENG-2649`),
 or as `<repo>#<number>` for the GitHub issue, or for the PR when there is no
 issue, and nothing else. The Claude skill's "Lanes and leads"

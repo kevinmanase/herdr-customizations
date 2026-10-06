@@ -95,8 +95,9 @@ from ticket-graph checkpoints, Linear, GitHub and the tabs.
 
 One orchestrator holding every lane's detail fills its context. So the work
 is split into lanes, listed in `~/.config/team-floor/lanes.json`, and a busy
-lane gets a lead: a Claude session named `lead-<lane>` that runs that lane's
-queue. The orchestrator stays the one way in and keeps one line per lane.
+lane gets a lead: a Claude session named `<lane>-lead` that runs that lane's
+queue (leads started before 2026-10-06 keep the old name, `lead-<lane>`, until
+they hand back). The orchestrator stays the one way in and keeps one line per lane.
 
 Jev picks a brief's lane; fixed rules decide what to do with the pick. A
 sure pick (0.60 or more) routes the brief. A middling one (0.40 to 0.60)
