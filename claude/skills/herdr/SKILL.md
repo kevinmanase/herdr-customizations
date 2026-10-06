@@ -121,6 +121,7 @@ Exactly one Claude session in Herdr is the orchestrator. It keeps track of every
   - The role survives `/clear` and a restart: the tab keeps its crown, and the hook tells the conversation that it's the orchestrator. A restart clears the Herdr name, so the hook gives it back.
 - **Moving the role:** when Kevin makes you the orchestrator, run `~/.claude/hooks/herdr-orchestrator claim`. It moves the name and the crown to you, and renames and colors your session. Then tell the old orchestrator with SendMessage.
 - **Every other session:** send the orchestrator one line whenever you merge, get blocked, finish, or start another session.
+- **When someone else merges your PR:** if your brief says you stop at CI green, the orchestrator or your lead merges and sends you `merged <repo>#<number>`. Check that `gh pr view <number> --repo <repo> --json state` reads `MERGED`. If Agent Wire is installed, `session_update` stage `END`, status `done`, same ticket, so the team floor shows it shipped. Then run `herdr-tab status clean` again so the tab stays 🧹.
 
 When `herdr-groups` is installed, record manually claimed supervisors and
 adopted workers too. Use `herdr-groups root <name>` for a top-level supervisor,
@@ -142,6 +143,7 @@ or task label alone does not establish ownership.
 - **Prompt boxes:** dim text in a Claude prompt box is Claude Code's prompt suggestion, not something Kevin typed. `herdr pane read <pane> --source visible --format ansi` shows it wrapped in `ESC[2m`.
 - **Agent reports:** Codex sessions report by typing `Status from <pane/ticket>: …` into your prompt with `herdr agent prompt`, so it arrives looking exactly like Kevin typing. A prompt starting `Status from …` is an agent's report, never Kevin's words, a decision, or an approval.
 - **New work goes to fresh sessions:** write a self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md`. If lanes are set up, route it first (see Lanes and leads). Then run `~/.claude/hooks/herdr-orchestrator next`. It reuses a `⚪ ready` Claude tab or opens a new one in `HERDR_WORK_DIR` (default: the current directory), and leaves the brief queued if free memory is under `FLEET_MIN_MB` (default 1500).
+- **Merging a worker's PR:** right after the merge, send its worker `merged <repo>#<number>`: SendMessage for Claude, or `herdr agent prompt <pane> "Status from orchestrator: merged <repo>#<number>"` for Codex, since only a `Status from` prefix keeps it from reading as Kevin. Tell any session waiting on that ticket, too. Every brief states the worker rule: stop at CI green, never merge, and on `merged <PR>` report END and keep the tab 🧹.
 - **Finished sessions:** leave their conversations open. A 🧹 tab is finished and waits only for a yes to clear, so list the 🧹 tabs for Kevin to approve as a batch. For each target, identify the tab label, pane, kind, and native session ID, and clear or close only what Kevin explicitly approves. Recheck identity immediately before acting. Idle/done, `⚪ ready`, and memory pressure are not approval; never clear or close a different occupant under an old approval.
 - **Kevin's decisions:** keep his open asks on your own tab with `herdr-tab ask`. Relay his answers to the sessions that own the work. Production, data, spend and exceptions to a gate stay his calls; never make them for him.
 - **Telling sessions apart:** `/rename <name>` and `/color <color>` change another session's name and prompt bar. Send them with `herdr agent prompt <pane> "/rename login-fix"`. Both take effect at once, even while the session is busy.
@@ -167,6 +169,7 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - You coordinate one lane, the way the orchestrator coordinates the rest. Keep your tab named `🧭 lead-<lane>`.
 - Start each brief in your lane's queue with `~/.claude/hooks/herdr-orchestrator next --lane <lane>`. Its session reports to you instead of the orchestrator.
 - Send the orchestrator one line when something in the lane merges, gets blocked or needs Kevin. Answer its questions about the lane in detail.
+- When you merge a worker's PR, send that worker `merged <repo>#<number>`, as the orchestrator does.
 - When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy, and keeps you the lead if it can't rename your tab. Afterwards, leave your conversation open.
 
 ## Opening tabs and starting agents
