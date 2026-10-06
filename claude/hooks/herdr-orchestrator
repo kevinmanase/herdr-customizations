@@ -9,6 +9,8 @@
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
     herdr-orchestrator lead <lane> --prompt-file <file>
                                        start <lane>-lead now, with the file's text as the owner's first message
+    herdr-orchestrator chat-agent --prompt-file <file>
+                                       start the team floor's chat agent now, with the file's text as its first message
     herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
 
 The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
@@ -39,6 +41,10 @@ lead brief with the owner's message appended. It needs no TTY, only HERDR_ENV=1,
 HERDR_WORKSPACE_ID, so a launchd job can run it. It exits 0 when it starts the lead or one is
 already running, 3 when memory is short, 2 for a lane not in LANES, and 1 when herdr fails or a
 tab that lost the lead's name stands in the way.
+
+`chat-agent` starts this machine's chat agent the same way: one Claude session named chat-agent, in
+a tab named "💬 chat-agent", that answers the owner in the team floor's chat. Its one first prompt is
+the chat agent's brief with the owner's first message appended. It exits like `lead`, less the lane.
 """
 
 import contextlib
@@ -94,9 +100,27 @@ LEAD_BRIEF = (
     "is down to {handback} open item, run `~/.claude/hooks/herdr-orchestrator handback {lane}`. "
     "Leave this conversation open afterwards; never clear it."
 )
+KEVINS_MESSAGE = "----- Kevin's message -----\n{text}\n----- end of Kevin's message -----"
 CHAT_NOTE = (
     "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on "
-    "first:\n\n----- Kevin's message -----\n{text}\n----- end of Kevin's message -----"
+    "first:\n\n" + KEVINS_MESSAGE
+)
+CHAT_AGENT = "chat-agent"
+CHAT_LABEL = f"💬 {CHAT_AGENT}"
+CHAT_BRIEF = (
+    f"You are {CHAT_AGENT}, this machine's agent for the team floor's chat. Kevin talks to you from "
+    "the chat; each of his messages is typed into this session. Load the `herdr` skill and follow its "
+    f"Chat agent section. Keep your tab named `{CHAT_LABEL}`. Rules of thumb:\n"
+    '- Answer in the chat with `team-floor say "<text>"`, never in this terminal: Kevin doesn\'t read it.\n'
+    "- Read `team-floor floor` first. It holds every machine's sessions, tickets and shipped work.\n"
+    '- Ask a machine\'s orchestrator, with `team-floor ask <machine> "<question>"`, only when the floor '
+    "doesn't hold the answer. Its reply appears in the chat.\n"
+    '- Hand real work to a lane with `team-floor route <lane> "<text>"`. Never do lane work yourself.\n'
+    "- Say who you contacted.\n"
+    "- Keep replies short.\n"
+    "- Never start, stop, clear or close sessions yourself.\n"
+    "Leave this conversation open."
+    "\n\nKevin's first message from the chat:\n\n" + KEVINS_MESSAGE
 )
 LANE_NOTE = (
     "\n\nThis brief is in the {lane} lane. While {lead} runs, send it your one-line updates "
@@ -751,32 +775,71 @@ def leads():
     return 0
 
 
+def owner_message(command, path):
+    """The owner's message from `path` for a session started from outside Herdr, or None after saying why not."""
+    missing = [name for name in ("HERDR_WORK_DIR", "HERDR_WORKSPACE_ID") if not os.environ.get(name)]
+    if missing:
+        print(f"{command}: set {' and '.join(missing)}", file=sys.stderr)
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            message = handle.read().strip()
+    except (OSError, ValueError) as error:
+        print(f"{command}: {error}", file=sys.stderr)
+        return None
+    if not message:
+        print(f"{command}: {path} is empty", file=sys.stderr)
+    return message or None
+
+
 def lead(lane_id=None, flag=None, path=None):
     """Start one lane's lead now, its first prompt carrying the owner's message from `path`."""
     if not lane_id or flag != "--prompt-file" or not path:
         print("usage: herdr-orchestrator lead <lane> --prompt-file <file>", file=sys.stderr)
         return 2
-    missing = [name for name in ("HERDR_WORK_DIR", "HERDR_WORKSPACE_ID") if not os.environ.get(name)]
-    if missing:
-        print(f"lead: set {' and '.join(missing)}", file=sys.stderr)
-        return 2
     try:
         lanes = load_lanes()
-        with open(path, encoding="utf-8") as handle:
-            message = handle.read().strip()
-    except (LanesUnreadable, OSError, ValueError) as error:
+    except LanesUnreadable as error:
         print(f"lead: {error}", file=sys.stderr)
         return 2
     lane = next((lane for lane in lanes if lane["id"] == lane_id), None)
     if not lane:
         print(f"lead: {lane_id} is not a lane in {LANES}", file=sys.stderr)
         return 2
+    message = owner_message("lead", path)
     if not message:
-        print(f"lead: {path} is empty", file=sys.stderr)
         return 2
     code, line = start_lead(lane, message)
     print(f"{lane_id}: {line}")
     return code
+
+
+def chat_agent(flag=None, path=None):
+    """Start this machine's chat agent unless it runs, its first prompt carrying the owner's message from `path`."""
+    if flag != "--prompt-file" or not path:
+        print("usage: herdr-orchestrator chat-agent --prompt-file <file>", file=sys.stderr)
+        return 2
+    message = owner_message(CHAT_AGENT, path)
+    if not message:
+        return 2
+    with locked(QUEUE, ".chat-agent.lock"):
+        if agent_named(CHAT_AGENT):
+            print(f"{CHAT_AGENT} is already running, so none started")
+            return 0
+        stray = next((p["tab_id"] for p in labelled_panes(CHAT_LABEL) if p.get("agent")), None)
+        if stray:
+            print(f"tab {stray} reads as {CHAT_AGENT}'s but lost the name, so no second one starts")
+            return 1
+        pane = start_session(CHAT_AGENT, CHAT_LABEL)
+        if not pane:
+            print(f"{CHAT_AGENT} waits for memory")
+            return 3
+        try:
+            prompt_when_ready(CHAT_AGENT, CHAT_BRIEF.format(text=message))
+        except RuntimeError as error:
+            raise RuntimeError(f"{CHAT_AGENT} started in pane {pane} but didn't get its brief: {error}") from None
+    print(f"started {CHAT_AGENT} in pane {pane}")
+    return 0
 
 
 def handback(lane_id=None):
@@ -831,6 +894,7 @@ def main():
         "route": (route, 1),
         "leads": (leads, 0),
         "lead": (lead, 3),
+        "chat-agent": (chat_agent, 2),
         "handback": (handback, 1),
     }
     if command not in commands or len(args) > commands[command][1]:

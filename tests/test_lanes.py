@@ -849,3 +849,110 @@ def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
     result = herdr.run(ORCHESTRATOR, "next")
     assert result.returncode == 0, result.stderr
     assert herdr.state["agents"]["eng-1"]["pane_id"] == "p2"
+
+
+# The team floor's chat agent: one per machine, started like a lead from outside Herdr.
+
+
+def start_chat(herdr, tmp_path, text="What's in flight?", **extra):
+    message = tmp_path / "message.txt"
+    message.write_text(text)
+    herdr.environ.pop("HERDR_PANE_ID", None)  # a launchd job runs outside any pane, with no TTY
+    return herdr.run(ORCHESTRATOR, "chat-agent", "--prompt-file", str(message), **extra)
+
+
+def test_chat_agent_starts_with_one_first_prompt_from_outside_herdr(herdr, queue, tmp_path):
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "started chat-agent in pane t3:p1\n"
+    assert started(herdr) == ["chat-agent"]
+    (create,) = [call for call in herdr.state["calls"] if call[:2] == ["tab", "create"]]
+    assert create[create.index("--workspace") + 1] == "w1"
+    assert create[create.index("--cwd") + 1] == str(tmp_path)
+    assert herdr.label("t3") == "💬 chat-agent"
+    (brief,) = prompts(herdr, "chat-agent")
+    assert brief.startswith("You are chat-agent, this machine's agent for the team floor's chat.")
+    for rule in ("team-floor say", "team-floor floor", "team-floor ask", "team-floor route", "Never start, stop"):
+        assert rule in brief
+    assert brief.endswith("----- Kevin's message -----\nWhat's in flight?\n----- end of Kevin's message -----")
+
+
+def test_chat_agent_does_nothing_when_it_runs(herdr, queue, tmp_path):
+    herdr.set_state(agents={**herdr.state["agents"], "chat-agent": {"pane_id": "p9", "tab_id": "t9"}})
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "chat-agent is already running, so none started\n"
+    assert started(herdr) == [] and prompts(herdr, "chat-agent") == []
+
+
+def test_no_second_chat_agent_beside_one_that_lost_its_name(herdr, queue, tmp_path):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 💬 chat-agent"})
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "tab t1 reads as chat-agent's but lost the name" in result.stdout
+    assert started(herdr) == []
+
+
+def test_a_restarted_chat_agent_takes_its_name_back(herdr):
+    herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 💬 chat-agent"})
+    result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "you are chat-agent, the team floor's chat agent" in context
+    assert herdr.state["agents"]["chat-agent"]["pane_id"] == "p1"
+
+
+def test_chat_agent_exits_3_when_memory_is_short(herdr, queue, tmp_path):
+    result = start_chat(herdr, tmp_path, FLEET_MIN_MB="100000000")
+    assert result.returncode == 3
+    assert "chat-agent waits for memory" in result.stdout
+    assert started(herdr) == [] and set(herdr.state["tabs"]) == {"t1", "t9"}
+
+
+def test_chat_agent_reports_herdr_s_error_code(herdr, queue, tmp_path):
+    herdr.set_state(fail={"agent start": "agent_start_timeout"})
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "agent_start_timeout" in result.stderr
+    assert set(herdr.state["tabs"]) == {"t1", "t9"}  # the new tab is closed again
+
+
+def test_chat_agent_waits_while_the_new_session_is_busy_or_not_ready(herdr, queue, tmp_path):
+    herdr.set_state(fail_once={"agent start": "agent_pane_busy", "agent prompt chat-agent": "agent_not_ready"})
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert started(herdr) == ["chat-agent", "chat-agent"]
+    assert len(prompts(herdr, "chat-agent")) == 2
+
+
+def test_chat_agent_says_when_it_missed_its_brief(herdr, queue, tmp_path):
+    herdr.set_state(fail={"agent prompt chat-agent": "agent_blocked"})
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "chat-agent started in pane t3:p1 but didn't get its brief" in result.stderr
+
+
+@pytest.mark.parametrize("args", [["chat-agent"], ["chat-agent", "--file", "message.txt"]])
+def test_chat_agent_needs_a_prompt_file(herdr, args):
+    result = herdr.run(ORCHESTRATOR, *args)
+    assert result.returncode == 2
+    assert "usage: herdr-orchestrator chat-agent" in result.stderr
+
+
+@pytest.mark.parametrize("unset", ["HERDR_WORK_DIR", "HERDR_WORKSPACE_ID"])
+def test_chat_agent_needs_the_callers_workspace_and_folder(herdr, queue, tmp_path, unset):
+    herdr.environ.pop(unset)
+    result = start_chat(herdr, tmp_path)
+    assert result.returncode == 2
+    assert f"set {unset}" in result.stderr
+    assert started(herdr) == []
+
+
+def test_chat_agent_refuses_an_empty_message(herdr, queue, tmp_path):
+    result = start_chat(herdr, tmp_path, text="  \n")
+    assert result.returncode == 2
+    assert "is empty" in result.stderr
+    assert started(herdr) == []
+
+
+def test_the_chat_label_matches_the_orchestrator():
+    assert runpy.run_path(str(TAB))["CHAT_LABEL"] == runpy.run_path(str(ORCHESTRATOR))["CHAT_LABEL"]
