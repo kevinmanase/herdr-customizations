@@ -88,7 +88,9 @@ the role, and tells every other session to report to it.
   and `herdr-orchestrator leads` gives a busy lane its own lead (below).
 
 The orchestrator coordinates. It hands investigations, fixes and watching CI
-to fresh sessions. It keeps no notes file: it rebuilds its picture each time
+to fresh sessions. Workers stop at CI green and it merges; it then
+tells the worker `merged <PR>`, and the worker reports END, so the team floor
+shows the work shipped. It keeps no notes file: it rebuilds its picture each time
 from ticket-graph checkpoints, Linear, GitHub and the tabs.
 
 ## Lanes and leads
