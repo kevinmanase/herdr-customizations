@@ -748,6 +748,29 @@ def test_lead_starts_with_one_first_prompt_from_outside_herdr(herdr, lanes, queu
     )
 
 
+def test_lead_from_the_chat_agent_says_its_message_is_the_agent_s(herdr, lanes, queue, tmp_path):
+    message = tmp_path / "message.txt"
+    message.write_text("The chat agent on m1 passes on this request from Kevin's chat:\n\nAdd an index")
+    herdr.environ.pop("HERDR_PANE_ID", None)
+    args = ("lead", "api", "--prompt-file", str(message), "--from-agent", "chat-agent@m1")
+    result = herdr.run(ORCHESTRATOR, *args)
+    assert result.returncode == 0, result.stderr
+    (brief,) = prompts(herdr, "api-lead")
+    assert "The team floor's chat agent (chat-agent@m1) started this lead from the chat" in brief
+    assert brief.endswith("Add an index\n----- end of chat-agent@m1's message -----")
+    assert "Kevin's message" not in brief and "Kevin started this lead" not in brief
+
+
+@pytest.mark.parametrize("extra", [("--from-agent",), ("--from-agent", "x y"), ("--from", "chat-agent@m1")])
+def test_lead_refuses_a_bad_from_agent(herdr, lanes, queue, tmp_path, extra):
+    message = tmp_path / "message.txt"
+    message.write_text("hi")
+    herdr.environ.pop("HERDR_PANE_ID", None)
+    result = herdr.run(ORCHESTRATOR, "lead", "api", "--prompt-file", str(message), *extra)
+    assert result.returncode == 2
+    assert started(herdr) == []
+
+
 def test_lead_does_nothing_when_the_lead_exists(herdr, lanes, queue, tmp_path):
     be_lead(herdr)
     result = start_lead(herdr, tmp_path)
@@ -890,8 +913,12 @@ def test_chat_agent_starts_with_one_first_prompt_from_outside_herdr(herdr, queue
     assert herdr.label("t3") == "💬 chat-agent"
     (brief,) = prompts(herdr, "chat-agent")
     assert brief.startswith("You are chat-agent, this machine's agent for the team floor's chat.")
-    for rule in ("team-floor say", "team-floor floor", "team-floor ask", "team-floor route", "Never start, stop"):
+    for rule in ("team-floor say", "team-floor floor", "Never start, stop", "[floor chat id=<id> from=<email>]"):
         assert rule in brief
+    # route and ask carry who it's for and the message it answers, from that message's header
+    assert "`team-floor ask --for <from> --re=<id> <machine>" in brief
+    assert "`team-floor route --for <from> --re=<id> <lane>" in brief
+    assert "say --re" not in brief  # its replies are plain: --re on say is an orchestrator's answer
     assert brief.endswith("----- Kevin's message -----\nWhat's in flight?\n----- end of Kevin's message -----")
 
 

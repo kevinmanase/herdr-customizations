@@ -7,8 +7,9 @@
     herdr-orchestrator next [--lane L] start the next queued brief in a ⚪ ready Claude tab, or a new tab
     herdr-orchestrator route <brief>   ask Jev which lane a queued brief belongs to, and move it there
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
-    herdr-orchestrator lead <lane> --prompt-file <file>
-                                       start <lane>-lead now, with the file's text as the owner's first message
+    herdr-orchestrator lead <lane> --prompt-file <file> [--from-agent <name>]
+                                       start <lane>-lead now, with the file's text as the owner's first message,
+                                       or as the chat agent <name>'s
     herdr-orchestrator chat-agent --prompt-file <file>
                                        start the team floor's chat agent now, with the file's text as its first message
     herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
@@ -37,7 +38,8 @@ A lane with at least LEAD_AT open briefs or sessions gets a lead: a fresh Claude
 lead runs `handback`. Its conversation stays open.
 
 `lead` starts one lane's lead on demand, for the team floor's chat: its one first prompt is the
-lead brief with the owner's message appended. It needs no TTY, only HERDR_ENV=1, HERDR_WORK_DIR and
+lead brief with the owner's message appended, or with `--from-agent <name>` the chat agent's,
+passing on a request from the owner's chat. It needs no TTY, only HERDR_ENV=1, HERDR_WORK_DIR and
 HERDR_WORKSPACE_ID, so a launchd job can run it. It exits 0 when it starts the lead or one is
 already running, 3 when memory is short, 2 for a lane not in LANES, and 1 when herdr fails or a
 tab that lost the lead's name stands in the way.
@@ -105,18 +107,28 @@ CHAT_NOTE = (
     "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on "
     "first:\n\n" + KEVINS_MESSAGE
 )
+AGENT_NOTE = (
+    "\n\nThe team floor's chat agent ({agent}) started this lead from the chat. Its message, not "
+    "Kevin's own, which is yours to act on first:\n\n----- {agent}'s message -----\n{text}\n"
+    "----- end of {agent}'s message -----"
+)
+AGENT_NAME = re.compile(r"[\w.-]{1,32}@[\w.-]{1,64}")  # the team floor's chat-agent@<machine>
 CHAT_AGENT = "chat-agent"
 CHAT_MARK = "💬"
 CHAT_LABEL = f"{CHAT_MARK} {CHAT_AGENT}"
 CHAT_BRIEF = (
     f"You are {CHAT_AGENT}, this machine's agent for the team floor's chat. Kevin talks to you from "
-    "the chat; each of his messages is typed into this session. Load the `herdr` skill and follow its "
+    "the chat; each of his messages is typed into this session after a header line, "
+    "`[floor chat id=<id> from=<email>]`. Load the `herdr` skill and follow its "
     f"Chat agent section. Keep your tab named `{CHAT_LABEL}`. Rules of thumb:\n"
     '- Answer in the chat with `team-floor say "<text>"`, never in this terminal: Kevin doesn\'t read it.\n'
     "- Read `team-floor floor` first. It holds every machine's sessions, tickets and shipped work.\n"
-    '- Ask a machine\'s orchestrator, with `team-floor ask <machine> "<question>"`, only when the floor '
-    "doesn't hold the answer. Its reply appears in the chat.\n"
-    '- Hand real work to a lane with `team-floor route <lane> "<text>"`. Never do lane work yourself.\n'
+    "- Ask a machine's orchestrator, with `team-floor ask --for <from> --re=<id> <machine> "
+    '"<question>"`, only when the floor doesn\'t hold the answer. Its reply appears in the chat.\n'
+    '- Hand real work to a lane with `team-floor route --for <from> --re=<id> <lane> "<text>"`. Never do '
+    "lane work yourself.\n"
+    "- Take `<from>` and `<id>` from the header of the message that asked for it. Write `--re=<id>` with "
+    "the `=`: ids can start with `-`.\n"
     "- Say who you contacted.\n"
     "- Keep replies short.\n"
     "- Never start, stop, clear or close sessions yourself.\n"
@@ -742,9 +754,9 @@ def start_once(lock, mark, names, brief, on_start=None):
     return 0, f"started {name} in pane {pane}", True
 
 
-def start_lead(lane, message=None):
-    """Start a lane's lead unless it has one, with `message` from the owner appended to its brief.
-    Returns start_once's exit code and what happened."""
+def start_lead(lane, message=None, agent=None):
+    """Start a lane's lead unless it has one, with `message` from the owner, or passed on by the chat
+    agent named `agent`, appended to its brief. Returns start_once's exit code and what happened."""
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
     lane_id = lane["id"]
@@ -760,7 +772,7 @@ def start_lead(lane, message=None):
         handback=HANDBACK_AT,
     )
     if message:
-        brief += CHAT_NOTE.format(text=message)
+        brief += AGENT_NOTE.format(agent=agent, text=message) if agent else CHAT_NOTE.format(text=message)
 
     def fresh_lead():  # a new lead hasn't been asked to hand back yet, even if it then misses its brief
         with contextlib.suppress(FileNotFoundError):
@@ -811,10 +823,12 @@ def owner_message(command, path):
     return message or None
 
 
-def lead(lane_id=None, flag=None, path=None):
-    """Start one lane's lead now, its first prompt carrying the owner's message from `path`."""
-    if not lane_id or flag != "--prompt-file" or not path:
-        print("usage: herdr-orchestrator lead <lane> --prompt-file <file>", file=sys.stderr)
+def lead(lane_id=None, flag=None, path=None, *by):
+    """Start one lane's lead now, its first prompt carrying the owner's message from `path`, or with
+    `--from-agent <name>` the chat agent's."""
+    agent = by[1] if len(by) == 2 and by[0] == "--from-agent" else None
+    if not lane_id or flag != "--prompt-file" or not path or by and not AGENT_NAME.fullmatch(agent or ""):
+        print("usage: herdr-orchestrator lead <lane> --prompt-file <file> [--from-agent <name>]", file=sys.stderr)
         return 2
     try:
         lanes = load_lanes()
@@ -828,7 +842,7 @@ def lead(lane_id=None, flag=None, path=None):
     message = owner_message("lead", path)
     if not message:
         return 2
-    code, line = start_lead(lane, message)
+    code, line = start_lead(lane, message, agent)
     print(f"{lane_id}: {line}")
     return code
 
@@ -899,7 +913,7 @@ def main():
         "next": (next_brief, 2),
         "route": (route, 1),
         "leads": (leads, 0),
-        "lead": (lead, 3),
+        "lead": (lead, 5),
         "chat-agent": (chat_agent, 2),
         "handback": (handback, 1),
     }
