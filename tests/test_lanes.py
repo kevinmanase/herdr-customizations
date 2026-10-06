@@ -855,6 +855,14 @@ def test_a_start_says_when_the_session_missed_its_brief(herdr, lanes, queue, tmp
     assert "agent_blocked" in result.stderr
 
 
+def test_a_new_lead_that_missed_its_brief_is_not_marked_asked_back(herdr, lanes, queue, tmp_path):
+    (queue / "api").mkdir()
+    (queue / "api/.handback-asked").touch()  # left by a lead that exited without handing back
+    herdr.set_state(fail={"agent prompt api-lead": "agent_blocked"})
+    assert start_lead(herdr, tmp_path).returncode == 1
+    assert not (queue / "api/.handback-asked").exists()
+
+
 def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
     ready_tab(herdr, tmp_path)
     herdr.environ.pop("HERDR_WORKSPACE_ID")

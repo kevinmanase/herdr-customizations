@@ -716,9 +716,10 @@ def survey(lane):
     return f"{line}; asked {lead} to hand it back", False
 
 
-def start_once(lock, mark, names, brief):
+def start_once(lock, mark, names, brief, on_start=None):
     """Start a session named names[0], in a tab labelled `<mark> <name>`, with `brief` as its one first prompt,
-    unless an agent holds one of `names` or a tab with one of their labels lost its name.
+    unless an agent holds one of `names` or a tab with one of their labels lost its name. `on_start` runs once the
+    session runs, before its brief.
     Returns an exit code (0 started or already running, 1 a stray tab, 3 short of memory), what happened, and
     whether it started one."""
     name, labels = names[0], [f"{mark} {held}" for held in names]
@@ -732,6 +733,8 @@ def start_once(lock, mark, names, brief):
         pane = start_session(name, labels[0])
         if not pane:
             return 3, f"{name} waits for memory", False
+        if on_start:
+            on_start()
         try:
             prompt_when_ready(name, brief)
         except RuntimeError as error:
@@ -758,10 +761,14 @@ def start_lead(lane, message=None):
     )
     if message:
         brief += CHAT_NOTE.format(text=message)
-    code, line, started = start_once(locked(os.path.join(QUEUE, lane_id), ".lead.lock"), LEAD, names, brief)
-    if started:
+
+    def fresh_lead():  # a new lead hasn't been asked to hand back yet, even if it then misses its brief
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
+
+    lock = locked(os.path.join(QUEUE, lane_id), ".lead.lock")
+    code, line, started = start_once(lock, LEAD, names, brief, fresh_lead)
+    if started:
         if group_session(lead, NAME):
             try:
                 for session in lane_items(lane_id)[1]:
