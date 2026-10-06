@@ -486,9 +486,9 @@ def ask_line(text):
     return (questions or plain or ["reply needed"])[-1]
 
 
-def ask_options(text):
-    """Preset answers for `text`, a message Jev says waits on the reader: the items of the 2 to 4 item list that
-    ends it, just after the ask ask_line shows or just before it, else none. A wrong list is worse than none, so
+def ask_options(text, ask):
+    """Preset answers for `ask`, which ask_line found in `text`: the items of the 2 to 4 item list that ends
+    `text`, just after the ask or just before it, else none. A wrong list is worse than none, so
     the ask must read as a choice (which, prefer, how should I…, or "Should I:" over the list) without spelling
     out its own alternatives, and the items must be one flat list of choices, not steps already done. Keep this
     identical in claude/hooks/herdr-tab and codex/skills/herdr/scripts/herdr-tab.py."""
@@ -502,7 +502,7 @@ def ask_options(text):
     if not items or block[0][0].isspace() or any(item.fullmatch(line.strip()) for line in block if line[0].isspace()):
         return []  # no list, or a nested one
     markers = [found[1] for found in items]
-    kinds = {re.sub(r"[A-D]", "A", re.sub(r"[a-d]", "a", re.sub(r"\d", "1", marker))) for marker in markers}
+    kinds = {re.sub(r"\w", "x", marker) for marker in markers}  # the order check tells digits and letters apart
     order = "".join(char for marker in markers for char in marker if char.isalnum())
     if len(kinds) > 1 or order not in ("", "1234"[: len(items)], "ABCD"[: len(items)], "abcd"[: len(items)]):
         return []  # mixed markers, or a numbering that skips
@@ -512,9 +512,9 @@ def ask_options(text):
     ):
         return []  # repeats, checkboxes, or done steps ("Fixed the parser")
     anchor = after or (lines[-1] if lines else "")
-    if not anchor or anchor[0].isspace() or anchor.startswith(("#", ">", "|", "```", "~~~")):
+    if anchor.strip("*_ ") != ask and not anchor.strip("*_ ").endswith(" " + ask):  # the list is not by the ask
         return []
-    anchor = re.split(r"(?<=[.!])\s+(?=[A-Z])", anchor.strip("*_ "))[-1]
+    anchor = ask
     yes_no = re.match(
         r"(?i)(?:should|shall|do|does|did|can|could|will|would|is|are|am|was|were|may|might|have|has|"
         r"want|ok|okay|ready)\b",
@@ -531,7 +531,7 @@ def ask_options(text):
     framed = not after and anchor.endswith(":") and yes_no and re.search(r"\b(?:I|me|you)\b", anchor)
     by_number = re.search(r"\b[1-4A-D]\)?,? or \(?[1-4A-D]\b", anchor)  # "1 or 2?" names the list's items
     inline = re.search(r"(?i)\bor\b", anchor) and not by_number  # "merge now or wait?" names its own
-    if not (choice or framed or by_number and anchor.endswith("?")) or inline or ask_line(text) != anchor:
+    if not (choice or framed or by_number and anchor.endswith("?")) or inline:
         return []
     try:
         return check_options(options)
@@ -622,9 +622,8 @@ def hook(payload):
         if jev_says_waiting(text) and read(tab)[0] == DONE:  # a prompt or ask that landed meanwhile wins
             ask = ask_line(text)
             needs(QUESTION, ask)
-            wire_ask(
-                "codex", payload.get("session_id"), ask, "decide", ask_options(text)
-            )  # Kevin's next prompt clears both
+            options = ask_options(text, ask)
+            wire_ask("codex", payload.get("session_id"), ask, "decide", options)  # Kevin's next prompt clears both
         if not failing and os.path.exists(JEV_FAILED):  # Jev just started failing: tell Kevin now, once
             output["systemMessage"] = jev_warning()
     return output

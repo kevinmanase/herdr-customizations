@@ -245,12 +245,14 @@ NO_OPTIONS = [
 
 @pytest.mark.parametrize("message, options", OPTIONS)
 def test_a_list_of_choices_at_the_end_gives_the_ask_its_options(message, options):
-    assert runpy.run_path(str(TAB))["ask_options"](message) == options
+    helper = runpy.run_path(str(TAB))
+    assert helper["ask_options"](message, helper["ask_line"](message)) == options
 
 
 @pytest.mark.parametrize("message", NO_OPTIONS)
 def test_anything_less_clear_leaves_the_ask_without_options(message):
-    assert runpy.run_path(str(TAB))["ask_options"](message) == []
+    helper = runpy.run_path(str(TAB))
+    assert helper["ask_options"](message, helper["ask_line"](message)) == []
 
 
 def test_a_detected_choice_reaches_agent_wire_with_its_options(stop, herdr, jev, wire):
