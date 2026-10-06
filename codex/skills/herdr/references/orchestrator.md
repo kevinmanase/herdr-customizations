@@ -74,7 +74,7 @@ Inspect actual agent kind before sending product-specific slash commands.
 
 If `~/.config/team-floor/lanes.json` lists lanes, a busy lane gets a Claude
 lead named `<lane>-lead` (tab `🧭 <lane>-lead`) that runs
-`~/.cache/herdr-fleet/queue/<lane>/`. A lead started before 2026-10-06 is named
+`~/.cache/herdr-fleet/queue/<lane>/`. A lead started before the rename is named
 `lead-<lane>` and still counts as the lane's lead until it hands back. The
 orchestrator keeps one line per lane and asks a lead for detail instead of
 reading its sessions. Route a new brief

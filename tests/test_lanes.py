@@ -346,7 +346,7 @@ def test_open_sessions_count_until_merged_or_parked(herdr, lanes, queue):
     assert started(herdr) == []
 
 
-@pytest.mark.parametrize("lead", ["api-lead", "lead-api"])  # lead-api: a lead started before 2026-10-06
+@pytest.mark.parametrize("lead", ["api-lead", "lead-api"])  # lead-api: a lead started before the rename
 def test_no_second_lead_beside_one_that_lost_its_name(herdr, lanes, queue, lead):
     herdr.set_state(
         tabs={**herdr.state["tabs"], "t3": f"⏳ 🧭 {lead}"},
@@ -369,6 +369,16 @@ def test_a_restarted_lead_takes_its_name_back(herdr, lead):
     assert herdr.state["agents"][lead]["pane_id"] == "p1"
 
 
+def test_a_restarted_old_lead_stays_unnamed_beside_the_lanes_new_lead(herdr):
+    herdr.set_state(
+        tabs={**herdr.state["tabs"], "t1": "✅ 🧭 lead-api"},
+        agents={**herdr.state["agents"], "api-lead": {"pane_id": "p9", "tab_id": "t9"}},
+    )
+    result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
+    assert "a lane lead" not in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "lead-api" not in herdr.state["agents"]
+
+
 def be_lead(herdr, lead="api-lead", label=None):
     herdr.set_state(
         tabs={**herdr.state["tabs"], "t1": label or f"⏳ 🧭 {lead}"},
@@ -376,7 +386,7 @@ def be_lead(herdr, lead="api-lead", label=None):
     )
 
 
-# Leads started before 2026-10-06 are named lead-<lane>. One still running leads its lane until it hands back.
+# Leads started before the rename are named lead-<lane>. One still running leads its lane until it hands back.
 
 
 def test_a_lead_with_the_old_name_still_leads_its_lane(herdr, lanes, queue, tmp_path):
@@ -703,7 +713,7 @@ def test_the_lead_label_matches_the_orchestrator():
     orchestrator = runpy.run_path(str(ORCHESTRATOR))
     tab = runpy.run_path(str(TAB))
     lane = orchestrator["LANE_ID"].pattern
-    assert tab["LEAD_LABEL"].pattern == f"{orchestrator['LEAD']} ({lane}-lead|lead-{lane})"
+    assert tab["LEAD_LABEL"].pattern == f"{orchestrator['LEAD']} (?:({lane})-lead|lead-({lane}))"
     assert orchestrator["lead_names"]("api") == ("api-lead", "lead-api")
 
 
