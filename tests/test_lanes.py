@@ -758,7 +758,10 @@ def test_lead_from_the_chat_agent_says_its_message_is_the_agent_s(herdr, lanes, 
     assert "Kevin's message" not in brief and "Kevin started this lead" not in brief
 
 
-@pytest.mark.parametrize("extra", [("--from-agent",), ("--from-agent", "x y"), ("--from", "chat-agent@m1")])
+@pytest.mark.parametrize(
+    "extra",
+    [("--from-agent",), ("--from-agent", "x y"), ("--from", "chat-agent@m1"), ("--from-agent", "Kevin@floor")],
+)
 def test_lead_refuses_a_bad_from_agent(herdr, lanes, queue, tmp_path, extra):
     result = start_lead(herdr, tmp_path, after=extra)
     assert result.returncode == 2
