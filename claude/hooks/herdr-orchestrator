@@ -98,7 +98,8 @@ LEAD_BRIEF = (
 )
 MESSAGE = "----- {who}'s message -----\n{text}\n----- end of {who}'s message -----"
 CHAT_NOTE = (
-    "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on first:\n\n" + MESSAGE
+    "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on first:\n\n"
+    + MESSAGE.replace("{who}", "Kevin")
 )
 AGENT_NOTE = (
     "\n\nThe team floor's chat agent ({who}) started this lead from the chat. Its message, not "
@@ -787,7 +788,7 @@ def lead(lane_id=None, flag=None, path=None, by=None, agent=None):
     if not message:
         print(f"lead: {path} is empty", file=sys.stderr)
         return 2
-    note = AGENT_NOTE.format(who=agent, text=message) if by else CHAT_NOTE.format(who="Kevin", text=message)
+    note = AGENT_NOTE.format(who=agent, text=message) if by else CHAT_NOTE.format(text=message)
     code, line = start_lead(lane, note)
     print(f"{lane_id}: {line}")
     return code
