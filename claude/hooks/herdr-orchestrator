@@ -7,6 +7,8 @@
     herdr-orchestrator next [--lane L] start the next queued brief in a ⚪ ready Claude tab, or a new tab
     herdr-orchestrator route <brief>   ask Jev which lane a queued brief belongs to, and move it there
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
+    herdr-orchestrator lead <lane> --prompt-file <file>
+                                       start lead-<lane> now, with the file's text as the owner's first message
     herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
 
 The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
@@ -31,6 +33,12 @@ brief where it is and flags Kevin. It exits 0 when it routes and 3 when Kevin ha
 A lane with at least LEAD_AT open briefs or sessions gets a lead: a fresh Claude session named
 lead-<lane> that runs that lane's queue. When the lane is down to HANDBACK_AT open items, the
 lead runs `handback`. Its conversation stays open.
+
+`lead` starts one lane's lead on demand, for the team floor's chat: its one first prompt is the
+lead brief with the owner's message appended. It needs no TTY, only HERDR_ENV=1, HERDR_WORK_DIR and
+HERDR_WORKSPACE_ID, so a launchd job can run it. It exits 0 when it starts the lead or one is
+already running, 3 when memory is short, 2 for a lane not in LANES, and 1 when herdr fails or a
+tab that lost the lead's name stands in the way.
 """
 
 import contextlib
@@ -55,6 +63,7 @@ WORK_DIR = os.path.expanduser(os.environ.get("HERDR_WORK_DIR") or os.getcwd())
 QUEUE = os.path.expanduser(os.environ.get("HERDR_FLEET_QUEUE") or "~/.cache/herdr-fleet/queue")
 MIN_MB = int(os.environ.get("FLEET_MIN_MB", "1500"))
 SHELL_TRIES, SHELL_WAIT = 20, 0.5  # agent starts, and seconds between them, while a new tab's shell starts
+READY_TRIES = 120  # first prompts, SHELL_WAIT apart, while a new session finishes starting
 GRACE = 60  # seconds a restarted orchestrator gets to take its name back (herdr-tab's reclaim_crown)
 LANES = os.path.expanduser("~/.config/team-floor/lanes.json")
 LANE_ID = re.compile(r"[a-z][a-z0-9_-]{0,26}")  # so lead-<lane> is a valid Herdr agent name
@@ -84,6 +93,10 @@ LEAD_BRIEF = (
     "gets blocked or needs Kevin, and answer its questions about the lane in detail. When the lane "
     "is down to {handback} open item, run `~/.claude/hooks/herdr-orchestrator handback {lane}`. "
     "Leave this conversation open afterwards; never clear it."
+)
+CHAT_NOTE = (
+    "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on "
+    "first:\n\n----- Kevin's message -----\n{text}\n----- end of Kevin's message -----"
 )
 LANE_NOTE = (
     "\n\nThis brief is in the {lane} lane. While {lead} runs, send it your one-line updates "
@@ -233,23 +246,9 @@ def ensure():
                 "request",
             )
             return 3
-        herdr(
-            "agent",
-            "start",
-            NAME,
-            "--kind",
-            "claude",
-            "--pane",
-            pane,
-            "--timeout",
-            "120000",
-            "--",
-            "-n",
-            NAME,
-            timeout=150,
-        )
+        start_in_new_tab(NAME, pane)
         type_into(NAME, f"/color {COLOR}")
-        herdr("agent", "prompt", NAME, BRIEF)
+        prompt_when_ready(NAME, BRIEF)
         herdr(
             "notification",
             "show",
@@ -283,41 +282,65 @@ def agent_name(brief):
     return brief[: -len(".md")].split("-", 1)[-1]
 
 
-def start_in_new_tab(name, pane):
-    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
-    for attempt in range(SHELL_TRIES):
+def retrying(tries, codes, *args, timeout=10):
+    """A herdr call, tried again SHELL_WAIT apart while it fails with one of `codes`."""
+    for attempt in range(tries):
         try:
-            herdr(
-                "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
-                timeout=150,
-            )  # fmt: skip
-            return
+            return herdr(*args, timeout=timeout)
         except RuntimeError as error:
-            if error_code(error) != "agent_pane_busy" or attempt == SHELL_TRIES - 1:
+            if error_code(error) not in codes or attempt == tries - 1:
                 raise
         time.sleep(SHELL_WAIT)
+
+
+def start_in_new_tab(name, pane):
+    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
+    try:
+        retrying(
+            SHELL_TRIES, ("agent_pane_busy",),
+            "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
+            timeout=150,
+        )  # fmt: skip
+    except RuntimeError as error:
+        if error_code(error) != "agent_not_ready":  # started and holds its name, so prompt_when_ready waits instead
+            raise
+
+
+def prompt_when_ready(name, text):
+    """A new session's first prompt, retried while it's busy or still starting."""
+    retrying(READY_TRIES, ("agent_pane_busy", "agent_not_ready"), "agent", "prompt", name, text)
 
 
 def start_session(name, label=None):
     """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
     # A cleared session is already running and fresh, so reusing one costs no memory.
-    ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
-    reuse = next(
-        (
-            p
-            for p in herdr("pane", "list")["panes"]
-            if p["tab_id"] in ready
-            and p.get("agent") == "claude"
-            and p.get("cwd") == WORK_DIR
-            and p.get("agent_status") in ("idle", "done")
-        ),
-        None,
-    )
+    workspace = os.environ.get("HERDR_WORKSPACE_ID")
+    # `next` and a lead started on demand can run at once, so pick and relabel under one lock: the tab stops
+    # reading ⚪ ready before anything else can pick it again.
+    with locked(QUEUE, ".ready.lock"):
+        ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
+        reuse = next(
+            (
+                p
+                for p in herdr("pane", "list")["panes"]
+                if p["tab_id"] in ready
+                and p.get("agent") == "claude"
+                and p.get("cwd") == WORK_DIR
+                and (not workspace or p.get("workspace_id", workspace) == workspace)
+                and p.get("agent_status") in ("idle", "done")
+            ),
+            None,
+        )
+        if reuse:
+            herdr("tab", "rename", reuse["tab_id"], label or name)
     if reuse:
-        herdr("agent", "rename", reuse["pane_id"], name)
+        try:
+            herdr("agent", "rename", reuse["pane_id"], name)
+        except RuntimeError:  # give the tab back, so it neither reads as a lead nor gets lost to reuse
+            with contextlib.suppress(RuntimeError):
+                herdr("tab", "rename", reuse["tab_id"], "⚪ ready")
+            raise
         type_into(name, f"/rename {name}")
-        if label:
-            herdr("tab", "rename", reuse["tab_id"], label)
         return reuse["pane_id"]
     avail = available_mb()
     if avail < MIN_MB:
@@ -367,7 +390,7 @@ def next_brief(*args):
         if not pane:
             return 3
         group_session(name, f"lead-{lane}" if lane else NAME)
-        herdr("agent", "prompt", name, text)
+        prompt_when_ready(name, text)
         os.makedirs(os.path.join(folder, "started"), exist_ok=True)
         os.rename(path, os.path.join(folder, "started", brief))
         print(f"fleet: started {name} in pane {pane}")
@@ -595,7 +618,7 @@ def route(path=None):
         os.remove(path)
         print(f"moved to {target}")
         line, busy = survey(lane)
-    print(f"{line}; {start_lead(lane)}" if busy else line)
+    print(f"{line}; {start_lead(lane)[1]}" if busy else line)
     return 0
 
 
@@ -652,21 +675,22 @@ def survey(lane):
     return f"{line}; asked {lead} to hand it back", False
 
 
-def start_lead(lane):
-    """Start a busy lane's lead unless it has one; what happened."""
+def start_lead(lane, message=None):
+    """Start a lane's lead unless it has one, with `message` from the owner appended to its brief.
+    Returns an exit code (0 started or already running, 1 a stray lead tab, 3 short of memory) and what happened."""
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
     lane_id, lead = lane["id"], f"lead-{lane['id']}"
     label = f"{LEAD} {lead}"
     with locked(os.path.join(QUEUE, lane_id), ".lead.lock"):
         if agent_named(lead):
-            return f"{lead} is already running"
+            return 0, f"{lead} is already running, so none started"
         stray = lost_lead(lead)
         if stray:
-            return f"tab {stray} reads {label} but lost the name, so no second lead starts"
+            return 1, f"tab {stray} reads {label} but lost the name, so no second lead starts"
         pane = start_session(lead, label)
         if not pane:
-            return f"{lead} waits for memory"
+            return 3, f"{lead} waits for memory"
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
         brief = LEAD_BRIEF.format(
@@ -678,14 +702,19 @@ def start_lead(lane):
             lane=lane_id,
             handback=HANDBACK_AT,
         )
-        herdr("agent", "prompt", lead, brief)
+        if message:
+            brief += CHAT_NOTE.format(text=message)
+        try:
+            prompt_when_ready(lead, brief)
+        except RuntimeError as error:
+            raise RuntimeError(f"{lead} started in pane {pane} but didn't get its brief: {error}") from None
         if group_session(lead, NAME):
             try:
                 for session in lane_items(lane_id)[1]:
                     group_session(session, lead)
             except RuntimeError as error:
                 print(f"fleet: grouping {lead}'s workers failed: {error}", file=sys.stderr)
-    return f"started {lead} in pane {pane}"
+    return 0, f"started {lead} in pane {pane}"
 
 
 def leads():
@@ -700,8 +729,36 @@ def leads():
     with queue_lock():
         surveyed = [(lane, *survey(lane)) for lane in lanes]
     for lane, line, busy in surveyed:
-        print(f"{line}; {start_lead(lane)}" if busy else line)
+        print(f"{line}; {start_lead(lane)[1]}" if busy else line)
     return 0
+
+
+def lead(lane_id=None, flag=None, path=None):
+    """Start one lane's lead now, its first prompt carrying the owner's message from `path`."""
+    if not lane_id or flag != "--prompt-file" or not path:
+        print("usage: herdr-orchestrator lead <lane> --prompt-file <file>", file=sys.stderr)
+        return 2
+    missing = [name for name in ("HERDR_WORK_DIR", "HERDR_WORKSPACE_ID") if not os.environ.get(name)]
+    if missing:
+        print(f"lead: set {' and '.join(missing)}", file=sys.stderr)
+        return 2
+    try:
+        lanes = load_lanes()
+        with open(path, encoding="utf-8") as handle:
+            message = handle.read().strip()
+    except (LanesUnreadable, OSError, ValueError) as error:
+        print(f"lead: {error}", file=sys.stderr)
+        return 2
+    lane = next((lane for lane in lanes if lane["id"] == lane_id), None)
+    if not lane:
+        print(f"lead: {lane_id} is not a lane in {LANES}", file=sys.stderr)
+        return 2
+    if not message:
+        print(f"lead: {path} is empty", file=sys.stderr)
+        return 2
+    code, line = start_lead(lane, message)
+    print(f"{lane_id}: {line}")
+    return code
 
 
 def handback(lane_id=None):
@@ -755,6 +812,7 @@ def main():
         "next": (next_brief, 2),
         "route": (route, 1),
         "leads": (leads, 0),
+        "lead": (lead, 3),
         "handback": (handback, 1),
     }
     if command not in commands or len(args) > commands[command][1]:

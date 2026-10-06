@@ -116,7 +116,7 @@ def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(m
         "lost_lead": lambda *args: None,
         "start_session": lambda *args: "p2",
         "group_session": lambda *args: True,
-        "herdr": lambda *args: calls.append(args),
+        "herdr": lambda *args, **options: calls.append(args),
     }.items():
         monkeypatch.setitem(start.__globals__, name, value)
 
@@ -124,7 +124,7 @@ def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(m
         raise RuntimeError("agent list unavailable")
 
     monkeypatch.setitem(start.__globals__, "lane_items", unavailable)
-    assert start(LANES["lanes"][0]) == "started lead-api in pane p2"
+    assert start(LANES["lanes"][0]) == (0, "started lead-api in pane p2")
     assert calls[0][:3] == ("agent", "prompt", "lead-api")
     assert "You are lead-api" in calls[0][3]
     assert "workers failed: agent list unavailable" in capsys.readouterr().err
@@ -149,7 +149,7 @@ def route(herdr, jev, brief, key="test-key"):
 
 
 def started(herdr):
-    return [call[2] for call in herdr.state["calls"] if call[:2] == ["agent", "start"]]
+    return [call[2] for call in herdr.state.get("calls", []) if call[:2] == ["agent", "start"]]
 
 
 def prompts(herdr, name):
@@ -311,7 +311,7 @@ def test_jev_unavailable_starts_no_lead(herdr, jev, lanes, queue):
     assert started(herdr) == []
 
 
-def test_a_lead_reuses_a_ready_tab(herdr, lanes, queue, tmp_path):
+def ready_tab(herdr, tmp_path):
     herdr.set_state(
         tabs={**herdr.state["tabs"], "t2": "⚪ ready"},
         panes=[
@@ -319,6 +319,10 @@ def test_a_lead_reuses_a_ready_tab(herdr, lanes, queue, tmp_path):
             {"pane_id": "p2", "tab_id": "t2", "agent": "claude", "cwd": str(tmp_path), "agent_status": "idle"},
         ],
     )
+
+
+def test_a_lead_reuses_a_ready_tab(herdr, lanes, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
     (queue / "api").mkdir()
     for n in range(1, 5):
         (queue / f"api/0{n}-task-{n}.md").write_text(f"Task {n}.")
@@ -660,3 +664,137 @@ def test_the_lead_label_matches_the_orchestrator():
     orchestrator = runpy.run_path(str(ORCHESTRATOR))
     tab = runpy.run_path(str(TAB))
     assert tab["LEAD_LABEL"].pattern == f"{orchestrator['LEAD']} (lead-{orchestrator['LANE_ID'].pattern})"
+
+
+def start_lead(herdr, tmp_path, lane="api", text="Why is the webhook retrying twice?", **extra):
+    message = tmp_path / "message.txt"
+    message.write_text(text)
+    herdr.environ.pop("HERDR_PANE_ID", None)  # a launchd job runs outside any pane, with no TTY
+    return herdr.run(ORCHESTRATOR, "lead", lane, "--prompt-file", str(message), **extra)
+
+
+def test_lead_starts_with_one_first_prompt_from_outside_herdr(herdr, lanes, queue, tmp_path):
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "api: started lead-api in pane t3:p1" in result.stdout
+    assert started(herdr) == ["lead-api"]
+    (create,) = [call for call in herdr.state["calls"] if call[:2] == ["tab", "create"]]
+    assert create[create.index("--workspace") + 1] == "w1"
+    assert create[create.index("--cwd") + 1] == str(tmp_path)
+    assert herdr.label("t3") == "🧭 lead-api"
+    (brief,) = prompts(herdr, "lead-api")
+    assert brief.startswith("You are lead-api, the lead for the API lane")
+    assert brief.endswith(
+        "----- Kevin's message -----\nWhy is the webhook retrying twice?\n----- end of Kevin's message -----"
+    )
+
+
+def test_lead_does_nothing_when_the_lead_exists(herdr, lanes, queue, tmp_path):
+    be_lead(herdr)
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "api: lead-api is already running, so none started\n"
+    assert started(herdr) == [] and prompts(herdr, "lead-api") == []
+
+
+def test_lead_exits_3_when_memory_is_short(herdr, lanes, queue, tmp_path):
+    result = start_lead(herdr, tmp_path, FLEET_MIN_MB="100000000")
+    assert result.returncode == 3
+    assert "lead-api waits for memory" in result.stdout
+    assert started(herdr) == [] and set(herdr.state["tabs"]) == {"t1", "t9"}
+
+
+def test_lead_reports_herdr_s_error_code(herdr, lanes, queue, tmp_path):
+    herdr.set_state(fail={"agent start": "agent_start_timeout"})
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "agent_start_timeout" in result.stderr
+    assert set(herdr.state["tabs"]) == {"t1", "t9"}  # the new tab is closed again
+
+
+def test_lead_waits_while_the_new_session_is_busy_or_not_ready(herdr, lanes, queue, tmp_path):
+    herdr.set_state(
+        fail_once={"agent start": "agent_pane_busy", "agent prompt lead-api": "agent_not_ready"},
+    )
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert started(herdr) == ["lead-api", "lead-api"]
+    assert len(prompts(herdr, "lead-api")) == 2
+
+
+def test_lead_prompts_a_session_that_started_not_ready(herdr, lanes, queue, tmp_path):
+    herdr.set_state(start_not_ready=True)
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert started(herdr) == ["lead-api"]
+    assert len(prompts(herdr, "lead-api")) == 1
+
+
+@pytest.mark.parametrize("lane", ["misc", "web"])
+def test_lead_refuses_misc_and_unknown_lanes(herdr, lanes, queue, tmp_path, lane):
+    result = start_lead(herdr, tmp_path, lane=lane)
+    assert result.returncode == 2
+    assert f"{lane} is not a lane" in result.stderr
+    assert started(herdr) == []
+
+
+@pytest.mark.parametrize("args", [["lead", "api"], ["lead", "api", "--file", "message.txt"]])
+def test_lead_needs_a_prompt_file(herdr, lanes, args):
+    result = herdr.run(ORCHESTRATOR, *args)
+    assert result.returncode == 2
+    assert "usage: herdr-orchestrator lead" in result.stderr
+
+
+@pytest.mark.parametrize("unset", ["HERDR_WORK_DIR", "HERDR_WORKSPACE_ID"])
+def test_lead_needs_the_callers_workspace_and_folder(herdr, lanes, queue, tmp_path, unset):
+    herdr.environ.pop(unset)
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 2
+    assert f"set {unset}" in result.stderr
+    assert started(herdr) == []
+
+
+def test_lead_refuses_an_empty_message(herdr, lanes, queue, tmp_path):
+    result = start_lead(herdr, tmp_path, text="  \n")
+    assert result.returncode == 2
+    assert "is empty" in result.stderr
+    assert started(herdr) == []
+
+
+def test_two_nexts_do_not_share_one_ready_tab(herdr, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
+    (queue / "01-eng-1.md").write_text("First.")
+    (queue / "02-eng-2.md").write_text("Second.")
+    for _ in range(2):
+        result = herdr.run(ORCHESTRATOR, "next")
+        assert result.returncode == 0, result.stderr
+    agents = herdr.state["agents"]
+    assert agents["eng-1"]["pane_id"] == "p2"
+    assert agents["eng-2"]["pane_id"] != "p2"
+    assert herdr.label("t2") == "eng-1"
+
+
+def test_a_ready_tab_whose_agent_rename_fails_reads_ready_again(herdr, lanes, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
+    herdr.set_state(fail={"agent rename p2": "agent_name_taken"})
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "agent_name_taken" in result.stderr
+    assert herdr.label("t2") == "⚪ ready"
+
+
+def test_lead_says_when_the_started_lead_missed_its_brief(herdr, lanes, queue, tmp_path):
+    herdr.set_state(fail={"agent prompt lead-api": "agent_blocked"})
+    result = start_lead(herdr, tmp_path)
+    assert result.returncode == 1
+    assert "lead-api started in pane t3:p1 but didn't get its brief" in result.stderr
+    assert "agent_blocked" in result.stderr
+
+
+def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
+    ready_tab(herdr, tmp_path)
+    herdr.environ.pop("HERDR_WORKSPACE_ID")
+    (queue / "01-eng-1.md").write_text("First.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert herdr.state["agents"]["eng-1"]["pane_id"] == "p2"
