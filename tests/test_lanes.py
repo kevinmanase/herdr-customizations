@@ -580,6 +580,7 @@ def test_a_herdr_error_is_not_a_missing_lead(herdr):
         ("typesafe_key", COPIES),
         ("jev_says_waiting", HELPERS),
         ("ask_line", HELPERS),
+        ("ask_options", HELPERS),
         ("jev_warning", HELPERS),
         ("wire_ask", HELPERS),
     ],
