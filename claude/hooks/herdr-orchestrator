@@ -112,7 +112,8 @@ AGENT_NOTE = (
     "\n\nThe team floor's chat agent ({who}) started this lead from the chat. Its message, not "
     "Kevin's own, which is yours to act on first:\n\n" + MESSAGE
 )
-AGENT_NAME = re.compile(r"chat-agent@[A-Za-z0-9._-]{1,64}")  # the team floor's, never a person's
+# the team floor's chat-agent@<machine>, never a person's name; a machine's name may hold any printable text
+AGENT_NAME = re.compile(r"chat-agent@[^\x00-\x1f\x7f]{1,64}")
 CHAT_AGENT = "chat-agent"
 CHAT_MARK = "💬"
 CHAT_LABEL = f"{CHAT_MARK} {CHAT_AGENT}"
