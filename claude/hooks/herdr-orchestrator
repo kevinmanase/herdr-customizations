@@ -245,23 +245,9 @@ def ensure():
                 "request",
             )
             return 3
-        herdr(
-            "agent",
-            "start",
-            NAME,
-            "--kind",
-            "claude",
-            "--pane",
-            pane,
-            "--timeout",
-            "120000",
-            "--",
-            "-n",
-            NAME,
-            timeout=150,
-        )
+        start_in_new_tab(NAME, pane)
         type_into(NAME, f"/color {COLOR}")
-        herdr("agent", "prompt", NAME, BRIEF)
+        prompt_when_ready(NAME, BRIEF)
         herdr(
             "notification",
             "show",
@@ -295,54 +281,58 @@ def agent_name(brief):
     return brief[: -len(".md")].split("-", 1)[-1]
 
 
-def start_in_new_tab(name, pane):
-    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
-    for attempt in range(SHELL_TRIES):
+def retrying(tries, codes, *args, timeout=10):
+    """A herdr call, tried again SHELL_WAIT apart while it fails with one of `codes`."""
+    for attempt in range(tries):
         try:
-            herdr(
-                "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
-                timeout=150,
-            )  # fmt: skip
-            return
+            return herdr(*args, timeout=timeout)
         except RuntimeError as error:
-            if error_code(error) == "agent_not_ready":  # started, and holds its name; prompt_when_ready waits
-                return
-            if error_code(error) != "agent_pane_busy" or attempt == SHELL_TRIES - 1:
+            if error_code(error) not in codes or attempt == tries - 1:
                 raise
         time.sleep(SHELL_WAIT)
+
+
+def start_in_new_tab(name, pane):
+    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
+    try:
+        retrying(
+            SHELL_TRIES, ("agent_pane_busy",),
+            "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
+            timeout=150,
+        )  # fmt: skip
+    except RuntimeError as error:
+        if error_code(error) != "agent_not_ready":  # started and holds its name, so prompt_when_ready waits instead
+            raise
 
 
 def prompt_when_ready(name, text):
     """A new session's first prompt, retried while it's busy or still starting."""
-    for attempt in range(READY_TRIES):
-        try:
-            return herdr("agent", "prompt", name, text)
-        except RuntimeError as error:
-            if error_code(error) not in ("agent_pane_busy", "agent_not_ready") or attempt == READY_TRIES - 1:
-                raise
-        time.sleep(SHELL_WAIT)
+    retrying(READY_TRIES, ("agent_pane_busy", "agent_not_ready"), "agent", "prompt", name, text)
 
 
 def start_session(name, label=None):
     """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
     # A cleared session is already running and fresh, so reusing one costs no memory.
     workspace = os.environ["HERDR_WORKSPACE_ID"]
-    ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
-    reuse = next(
-        (
-            p
-            for p in herdr("pane", "list")["panes"]
-            if p["tab_id"] in ready
-            and p.get("agent") == "claude"
-            and p.get("cwd") == WORK_DIR
-            and p.get("workspace_id", workspace) == workspace
-            and p.get("agent_status") in ("idle", "done")
-        ),
-        None,
-    )
+    # `next` and a lead started on demand can run at once, so pick and relabel under one lock: the tab stops
+    # reading ⚪ ready before anything else can pick it again.
+    with locked(QUEUE, ".ready.lock"):
+        ready = {t["tab_id"] for t in herdr("tab", "list")["tabs"] if t.get("label") == "⚪ ready"}
+        reuse = next(
+            (
+                p
+                for p in herdr("pane", "list")["panes"]
+                if p["tab_id"] in ready
+                and p.get("agent") == "claude"
+                and p.get("cwd") == WORK_DIR
+                and p.get("workspace_id", workspace) == workspace
+                and p.get("agent_status") in ("idle", "done")
+            ),
+            None,
+        )
+        if reuse:
+            herdr("tab", "rename", reuse["tab_id"], label or name)
     if reuse:
-        # Relabel first, so the tab stops reading ⚪ ready before anything else can pick it again.
-        herdr("tab", "rename", reuse["tab_id"], label or name)
         herdr("agent", "rename", reuse["pane_id"], name)
         type_into(name, f"/rename {name}")
         return reuse["pane_id"]
@@ -737,9 +727,6 @@ def lead(lane_id=None, flag=None, path=None):
     """Start one lane's lead now, its first prompt carrying the owner's message from `path`."""
     if not lane_id or flag != "--prompt-file" or not path:
         print("usage: herdr-orchestrator lead <lane> --prompt-file <file>", file=sys.stderr)
-        return 2
-    if lane_id == "misc":
-        print("lead: misc has no lead; its messages go to the main orchestrator", file=sys.stderr)
         return 2
     missing = [name for name in ("HERDR_WORK_DIR", "HERDR_WORKSPACE_ID") if not os.environ.get(name)]
     if missing:
