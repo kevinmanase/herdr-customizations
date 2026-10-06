@@ -113,7 +113,7 @@ def test_a_failed_optional_worker_survey_cannot_leave_a_lead_without_its_brief(m
         "QUEUE": str(tmp_path),
         "locked": lambda *args: nullcontext(),
         "agent_named": lambda *args: None,
-        "labelled_panes": lambda *args: [],
+        "lost_lead": lambda *args: None,
         "start_session": lambda *args: "p2",
         "group_session": lambda *args: True,
         "herdr": lambda *args, **options: calls.append(args),

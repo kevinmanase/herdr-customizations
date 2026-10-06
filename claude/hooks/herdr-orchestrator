@@ -9,7 +9,7 @@
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
     herdr-orchestrator lead <lane> --prompt-file <file> [--from-agent <name>]
                                        start <lane>-lead now, with the file's text as the owner's first message,
-                                       or as the chat agent <name>'s
+                                       or as the team floor's headless chat agent <name>'s
     herdr-orchestrator handback <lane> run by a lead: give a quiet lane back to the orchestrator
 
 The orchestrator is the Herdr agent named `orchestrator`. Herdr keeps agent names unique among live
@@ -97,10 +97,8 @@ LEAD_BRIEF = (
     "Leave this conversation open afterwards; never clear it."
 )
 MESSAGE = "----- {who}'s message -----\n{text}\n----- end of {who}'s message -----"
-KEVINS_MESSAGE = MESSAGE.replace("{who}", "Kevin")
 CHAT_NOTE = (
-    "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on "
-    "first:\n\n" + KEVINS_MESSAGE
+    "\n\nKevin started this lead from the team floor chat. His message, which is yours to act on first:\n\n" + MESSAGE
 )
 AGENT_NOTE = (
     "\n\nThe team floor's chat agent ({who}) started this lead from the chat. Its message, not "
@@ -668,6 +666,12 @@ def lane_items(lane_id):
     return queued, sessions
 
 
+def lost_lead(lane_id):
+    """A tab that still reads as the lane lead's and runs an agent, though no agent has the lead's name."""
+    labels = [f"{LEAD} {lead}" for lead in lead_names(lane_id)]
+    return next((p["tab_id"] for p in labelled_panes(*labels) if p.get("agent")), None)
+
+
 def survey(lane):
     """One line about a lane, and whether it needs a lead. Asks a quiet lane's lead, once, to hand it back."""
     lane_id = lane["id"]
@@ -702,30 +706,29 @@ def start_lead(lane, note=""):
     # Outside the queue lock: starting a session can take minutes, and leads and workers need the queue
     # meanwhile. The lane's own lock keeps two of these from racing.
     lane_id = lane["id"]
-    names = lead_names(lane_id)
-    lead, labels = names[0], [f"{LEAD} {held}" for held in names]
-    brief = LEAD_BRIEF.format(
-        lead=lead,
-        name=lane.get("name") or lane_id,
-        about=lane.get("about") or lane.get("name") or lane_id,
-        label=labels[0],
-        queue=os.path.join(QUEUE, lane_id),
-        lane=lane_id,
-        handback=HANDBACK_AT,
-    )
     with locked(os.path.join(QUEUE, lane_id), ".lead.lock"):
-        held = next((held for held in names if agent_named(held)), None)
-        if held:
-            return 0, f"{held} is already running, so none started"
-        stray = next((p["tab_id"] for p in labelled_panes(*labels) if p.get("agent")), None)
+        agent, lead = lane_lead(lane_id)
+        if agent:
+            return 0, f"{lead} is already running, so none started"
+        stray = lost_lead(lane_id)
         if stray:
             return 1, f"tab {stray} reads as {lead}'s but lost the name, so no second one starts"
-        pane = start_session(lead, labels[0])
+        label = f"{LEAD} {lead}"
+        pane = start_session(lead, label)
         if not pane:
             return 3, f"{lead} waits for memory"
         # a new lead hasn't been asked to hand back yet, even if it then misses its brief
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(QUEUE, lane_id, ".handback-asked"))
+        brief = LEAD_BRIEF.format(
+            lead=lead,
+            name=lane.get("name") or lane_id,
+            about=lane.get("about") or lane.get("name") or lane_id,
+            label=label,
+            queue=os.path.join(QUEUE, lane_id),
+            lane=lane_id,
+            handback=HANDBACK_AT,
+        )
         try:
             prompt_when_ready(lead, brief + note)
         except RuntimeError as error:
@@ -784,7 +787,7 @@ def lead(lane_id=None, flag=None, path=None, by=None, agent=None):
     if not message:
         print(f"lead: {path} is empty", file=sys.stderr)
         return 2
-    note = AGENT_NOTE.format(who=agent, text=message) if by else CHAT_NOTE.format(text=message)
+    note = AGENT_NOTE.format(who=agent, text=message) if by else CHAT_NOTE.format(who="Kevin", text=message)
     code, line = start_lead(lane, note)
     print(f"{lane_id}: {line}")
     return code
