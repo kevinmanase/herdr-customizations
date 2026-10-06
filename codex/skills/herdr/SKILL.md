@@ -157,13 +157,6 @@ the team floor shows it shipped. Then run `status clean` again so the tab stays
 when Kevin assigns you that role. Session hooks retain the crown across a clear
 and remind a Codex orchestrator to rebuild its picture rather than keep notes.
 
-## Chat agent
-
-The `💬 chat-agent` tab is the team floor's chat agent: a Claude session that
-answers Kevin in the chat and hands work to lanes. Treat text it sends with
-`team-floor route` or `team-floor ask` as the chat agent's, not Kevin's. The
-Claude skill's "Chat agent" section has its rules.
-
 ## Automatic Codex hooks
 
 The local installation registers hooks in `~/.codex/hooks.json` for session

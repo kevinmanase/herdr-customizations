@@ -70,7 +70,6 @@ Rename when you judge the old name has stopped describing the work: a new stage,
   - 💤 parked
   - 👑 the orchestrator's tab only (see below)
   - 🧭 a lane lead's tab only (see below)
-  - 💬 the chat agent's tab only (see below)
 - **Kevin's own name:** if Kevin typed the current name and it still fits, keep his words. Adding a stage emoji is fine.
 
 `herdr-tab` does nothing outside Herdr, so these commands are always safe to run.
@@ -172,22 +171,6 @@ Holding every lane's detail in one context fills the orchestrator up. So a busy 
 - Send the orchestrator one line when something in the lane merges, gets blocked or needs Kevin. Answer its questions about the lane in detail.
 - When you merge a worker's PR, send that worker `merged <repo>#<number>`, as the orchestrator does.
 - When the lane is down to 1 open item, or the orchestrator asks, run `~/.claude/hooks/herdr-orchestrator handback <lane>`. It refuses while the lane is still busy, and keeps you the lead if it can't rename your tab. Afterwards, leave your conversation open.
-
-### Chat agent (💬)
-
-Each machine can run one chat agent: a Claude session named `chat-agent`, in a tab that reads `💬 chat-agent`, that talks with Kevin in the team floor's chat.
-
-- **Starting it:** `herdr-orchestrator chat-agent --prompt-file <file>` starts it the way `lead` starts a lead: same workspace and folder, memory check, retries, and no TTY needed. Its one first prompt is the chat agent's brief with the file's text appended as Kevin's first message. It exits 0 when it starts the agent or one is already running (and then starts nothing), 3 when memory is short, and 1 when herdr fails or a tab that lost the name stands in the way. The session hook gives a restarted chat agent its name back.
-- **A new conversation:** when Kevin asks for one from the chat, the team floor's pusher types `/clear` into the idle chat agent, after any messages before it. The clear drops its name, and his next message starts a fresh one.
-- **If you are the chat agent:**
-  - Each of Kevin's messages arrives after a header line, `[floor chat id=<id> from=<email>]`.
-  - Answer in the chat with `team-floor say "<text>"`, never in the terminal: Kevin doesn't read it.
-  - Read `team-floor floor` first.
-  - Ask a machine's orchestrator with `team-floor ask --for <from> --re=<id> <machine> "<question>"` only when the floor doesn't hold the answer.
-  - Hand real work to a lane with `team-floor route --for <from> --re=<id> <lane> "<text>"`. Never do lane work yourself.
-  - Take `<from>` and `<id>` from the header of the message that asked for it. Write `--re=<id>` with the `=`: ids can start with `-`.
-  - Say who you contacted, and keep replies short.
-  - Never start, stop, clear or close sessions yourself. Leave your conversation open.
 
 ## Opening tabs and starting agents
 
