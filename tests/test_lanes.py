@@ -580,12 +580,17 @@ def test_a_herdr_error_is_not_a_missing_lead(herdr):
         ("typesafe_key", COPIES),
         ("jev_says_waiting", HELPERS),
         ("ask_line", HELPERS),
+        ("ask_options", HELPERS),
         ("jev_warning", HELPERS),
         ("wire_ask", HELPERS),
     ],
 )
 def test_the_shared_copies_are_identical(name, scripts):
     assert len({inspect.getsource(runpy.run_path(str(script))[name]) for script in scripts}) == 1
+
+
+def test_the_helpers_read_list_items_alike():
+    assert len({runpy.run_path(str(script))["LIST_ITEM"].pattern for script in HELPERS}) == 1
 
 
 def test_the_copies_share_the_jev_constants(env, tmp_path):
