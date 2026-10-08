@@ -94,11 +94,11 @@ The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
 process against Herdr's pane process list. Inherited pane IDs and the focused
 tab are never sufficient. An ambiguous match or an app-server session gets no
-label writes; explicit commands report the missing binding. Codex's shared
-background server runs tools and hooks outside the pane and without Herdr's
-environment, so its sessions get no labels for now and its hooks stay silent.
-In the other unbound cases, root session and prompt hooks explain the
-limitation. Subagent hooks do not adopt the
+label writes; explicit commands report the missing binding. Plain `codex` runs
+its tools and hooks in the shared app server, outside the pane and without
+Herdr's environment, so its tabs get no labels yet and its hooks and label commands quietly do nothing
+([#49](https://github.com/kevinmanase/herdr-customizations/issues/49)).
+Otherwise, root session and prompt hooks explain the limitation. Subagent hooks do not adopt the
 parent tab; subagents must leave the parent's labels to its owning agent. The
 helper does not start other agents.
 
