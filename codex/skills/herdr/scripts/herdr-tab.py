@@ -33,12 +33,8 @@ REMINDER = (
 )
 FINISH_REMINDER = f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
 
-UNBOUND_REMINDER = (
-    "Herdr: this Codex session could not be matched to one foreground Herdr pane, so automatic labels were skipped. "
-    "Do not rename tabs or change labels using inherited pane IDs or the focused tab. "
-    "For terminal sessions, launch codex --no-daemon, or resume the saved session with --no-daemon. "
-    "Shared app-server sessions need a verified session-to-pane binding before label commands can work."
-)
+UNBOUND = "This Codex session couldn't be matched to a Herdr pane, so labels were skipped."
+UNBOUND_REMINDER = f"Herdr: {UNBOUND} Do not rename tabs or change labels using inherited pane IDs or the focused tab."
 
 
 def herdr(*args, timeout=2):
@@ -60,8 +56,8 @@ def resolve_hook_pane(payload=None):
     """Bind a hook or explicit command to its foreground Codex process, never inherited pane IDs.
 
     Shared app-server threads have no trustworthy per-pane process ancestry.
-    Until the runtime supplies that binding, skip their automatic metadata and
-    labels. Explicit commands enforce the same binding.
+    Until they are bound by session id instead (#49), skip their automatic
+    metadata and labels. Explicit commands enforce the same binding.
     """
     if payload is not None:
         session = payload.get("session_id")
@@ -658,10 +654,7 @@ def main():
         if args.command in ("name", "status", "ask", "request"):
             pane = resolve_hook_pane()
             if not pane:
-                raise RuntimeError(
-                    "Cannot bind this Codex process to one foreground Herdr pane; no labels were changed. "
-                    "Launch or resume terminal Codex with --no-daemon."
-                )
+                raise RuntimeError(UNBOUND)
             os.environ["HERDR_PANE_ID"] = pane
         if args.command == "hook":
             payload = json.load(sys.stdin)

@@ -38,16 +38,11 @@ context.
 
 ### Codex terminal sessions
 
-Launch Codex with `codex --no-daemon`. Its shared background server breaks the
-foreground-process binding used by the label helper, so the helper skips those
-sessions. The [Codex changelog](https://learn.chatgpt.com/docs/changelog)
-documents the flag. For an existing conversation, exit Codex and run
-`codex resume <session-id> --no-daemon` in the same terminal.
-
-Agent launches should pass the flag explicitly:
-`herdr agent start <name> --kind codex --pane <pane-id> -- --no-daemon`.
-Herdr 0.9.1's automatic session restore does not preserve this flag; use the
-explicit resume command above when restoring a Codex conversation.
+Launch Codex as plain `codex`, and start agents with
+`herdr agent start <name> --kind codex --pane <pane-id>`. Codex runs its tools
+and hooks in its shared background server, so the label helper can't yet match
+a session to its pane and skips its labels
+([#49](https://github.com/kevinmanase/herdr-customizations/issues/49)).
 
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one
