@@ -138,18 +138,18 @@ def daemon(codex, monkeypatch):
     return helper, state
 
 
-def run_hook(helper, monkeypatch, capsys, payload):
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "hook"])
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+def run(helper, monkeypatch, *command, session=THREAD):
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), *command])
+    monkeypatch.setattr(
+        sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": session}))
+    )
     helper.main()
-    return json.loads(capsys.readouterr().out)
 
 
 def test_a_daemon_command_binds_by_the_thread_id_in_its_pane_title(daemon, monkeypatch):
     helper, state = daemon
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "name", "🧪 login fix"])
 
-    helper.main()
+    run(helper, monkeypatch, "name", "🧪 login fix")
 
     assert label_writes(state) == [("tab", "rename", "my-tab", "⏳ 🧪 login fix")]
 
@@ -159,40 +159,41 @@ def test_a_daemon_hook_binds_by_its_payload_session_id(daemon, monkeypatch, caps
     monkeypatch.delenv("CODEX_THREAD_ID")  # hooks run with the daemon's own environment
     state["tabs"]["my-tab"] = "✅ 🔍 login fix"
 
-    output = run_hook(helper, monkeypatch, capsys, {"hook_event_name": "UserPromptSubmit", "session_id": THREAD})
+    run(helper, monkeypatch, "hook")
 
     assert state["tabs"]["my-tab"] == "⏳ 🔍 login fix"
-    assert f'python3 "{SCRIPT}" name' in output["hookSpecificOutput"]["additionalContext"]
+    assert f'python3 "{SCRIPT}" name' in json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
 
 
 @pytest.mark.parametrize(
-    "case", ["no-title", "ambiguous", "not-codex", "inside-another-item", "short-session", "other-thread"]
+    "session, mine, other, agent",
+    [
+        (THREAD, "Development", None, "codex"),  # no id in the title
+        (THREAD, f"Development | {SHOWN}", f"Development | {SHOWN}", "codex"),  # two panes show it
+        (THREAD, f"Development | {SHOWN}", None, "claude"),  # not a Codex pane
+        (THREAD, f"check {SHOWN} | Development", None, "codex"),  # inside another title item
+        (THREAD[:20], f"Development | {THREAD[:20]}", None, "codex"),  # too short to be a thread id
+        (THREAD[:-1] + "e", f"Development | {THREAD[:28]}f...", None, "codex"),  # another thread
+    ],
 )
-@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
-def test_a_daemon_session_without_exactly_one_title_match_changes_nothing(daemon, monkeypatch, capsys, case, command):
+def test_a_session_binds_only_to_exactly_one_title_match(daemon, session, mine, other, agent):
     helper, state = daemon
-    if case == "no-title":
-        state["titles"]["mine"] = "Development"
-    elif case == "ambiguous":
-        state["titles"]["other"] = f"Development | {SHOWN}"
-    elif case == "not-codex":
-        state["panes"][1]["agent"] = "claude"
-    elif case == "inside-another-item":
-        state["titles"]["mine"] = f"check {SHOWN} | Development"
-    elif case == "short-session":
-        monkeypatch.setenv("CODEX_THREAD_ID", THREAD[:20])
-        state["titles"]["mine"] = f"Development | {THREAD[:20]}"
-    else:
-        monkeypatch.setenv("CODEX_THREAD_ID", THREAD[:-1] + "e")
-        state["titles"]["mine"] = f"Development | {THREAD[:28]}f..."
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), *command])
-    payload = {"hook_event_name": "UserPromptSubmit", "session_id": helper.os.environ["CODEX_THREAD_ID"]}
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    state["titles"]["mine"] = mine
+    state["titles"]["other"] = other
+    state["panes"][1]["agent"] = agent
 
-    helper.main()
+    assert helper.title_pane(session) is None
+
+
+@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
+def test_an_unmatched_daemon_session_stays_quiet(daemon, monkeypatch, capsys, command):
+    helper, state = daemon
+    state["titles"]["mine"] = "Development"
+
+    run(helper, monkeypatch, *command)
 
     # Outside a pane's own environment an unmatched session stays quiet, as before #49.
-    assert capsys.readouterr().out.strip() == ("{}" if command == ["hook"] else "")
+    assert capsys.readouterr() == (("{}\n" if command == ["hook"] else ""), "")
     assert label_writes(state) == []
 
 
@@ -203,9 +204,8 @@ def test_a_daemon_session_without_herdr_running_stays_quiet(daemon, monkeypatch,
         raise FileNotFoundError("herdr")
 
     monkeypatch.setattr(helper, "herdr", missing)
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "name", "🧪 login fix"])
 
-    helper.main()
+    run(helper, monkeypatch, "name", "🧪 login fix")
 
     assert capsys.readouterr() == ("", "")
 
