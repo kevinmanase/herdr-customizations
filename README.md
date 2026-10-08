@@ -139,6 +139,15 @@ that list to see what each session reports. `herdr-tab ask` and `request` also
 set the session's Agent Wire ask, and my answer clears both. The labels and
 hooks work without it.
 
+Agent Wire 0.6 can also answer a session's own question dialog (Claude's
+`AskUserQuestion` and plan approval, Codex's `request_user_input`) from outside
+the terminal, so I can answer from the team floor. Claude needs Agent Wire's
+opt-in `hook claude --answer` PermissionRequest entry beside the herdr-tab
+hooks; see its
+[setup](https://github.com/kevinmanase/agent-wire/blob/main/docs/setup.md).
+Codex needs nothing extra, but a `codex --no-daemon` session (below) can't be
+answered this way.
+
 ## Development
 
 ```sh
