@@ -172,6 +172,7 @@ def test_a_daemon_hook_binds_by_its_payload_session_id(daemon, monkeypatch, caps
         (THREAD, f"Development | {SHOWN}", f"Development | {SHOWN}", "codex"),  # two panes show it
         (THREAD, f"Development | {SHOWN}", None, "claude"),  # not a Codex pane
         (THREAD, f"check {SHOWN} | Development", None, "codex"),  # inside another title item
+        (THREAD, f"{SHOWN} | Development | 01a11d70-0000-7000-8000-00000...", None, "codex"),  # a thread name
         (THREAD[:20], f"Development | {THREAD[:20]}", None, "codex"),  # too short to be a thread id
         (THREAD[:-1] + "e", f"Development | {THREAD[:28]}f...", None, "codex"),  # another thread
     ],
@@ -185,16 +186,56 @@ def test_a_session_binds_only_to_exactly_one_title_match(daemon, session, mine, 
     assert helper.title_pane(session) is None
 
 
-@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
-def test_an_unmatched_daemon_session_stays_quiet(daemon, monkeypatch, capsys, command):
+def test_an_unmatched_daemon_hook_stays_quiet(daemon, monkeypatch, capsys):
     helper, state = daemon
     state["titles"]["mine"] = "Development"
 
-    run(helper, monkeypatch, *command)
+    run(helper, monkeypatch, "hook")
 
-    # Outside a pane's own environment an unmatched session stays quiet, as before #49.
-    assert capsys.readouterr() == (("{}\n" if command == ["hook"] else ""), "")
+    assert capsys.readouterr() == ("{}\n", "")
     assert label_writes(state) == []
+
+
+@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["ask", "ship?"]])
+def test_an_unmatched_daemon_command_reports_it(daemon, monkeypatch, capsys, command):
+    helper, state = daemon
+    state["titles"]["mine"] = "Development"
+
+    with pytest.raises(SystemExit) as error:
+        run(helper, monkeypatch, *command)
+
+    assert error.value.code == 1
+    assert "couldn't be matched to a Herdr pane" in capsys.readouterr().err
+    assert label_writes(state) == []
+
+
+def test_a_daemon_clear_still_requires_approval(daemon, monkeypatch, capsys):
+    helper, _ = daemon
+
+    with pytest.raises(SystemExit) as error:
+        run(helper, monkeypatch, "clear")
+
+    assert error.value.code == 1
+    assert "explicit approval" in capsys.readouterr().err
+
+
+def test_a_title_match_with_another_recorded_session_is_refused(daemon):
+    helper, state = daemon
+    state["panes"][1]["agent_session"] = {"value": "01a11d70-0000-7000-8000-000000000000"}
+
+    assert helper.title_pane(THREAD) is None
+
+
+def test_a_failed_foreground_lookup_falls_back_to_the_title(daemon, monkeypatch):
+    helper, _ = daemon
+    monkeypatch.setenv("HERDR_ENV", "1")
+
+    def closed(*args, **kwargs):
+        raise RuntimeError("pane closed")
+
+    monkeypatch.setattr(helper, "foreground_pane", closed)
+
+    assert helper.resolve_hook_pane() == "mine"
 
 
 def test_a_daemon_session_without_herdr_running_stays_quiet(daemon, monkeypatch, capsys):

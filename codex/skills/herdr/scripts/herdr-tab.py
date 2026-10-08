@@ -74,13 +74,18 @@ def resolve_hook_pane(payload=None):
         session = payload.get("session_id")
         if not session or payload.get("agent_id") or (inherited and inherited != session):
             return None
-    # Only a caller in the pane's own environment can have the pane's TUI as an ancestor.
-    return (os.environ.get("HERDR_ENV") == "1" and foreground_pane()) or title_pane(session)
+    pane = None
+    try:  # only a caller in the pane's own environment can have the pane's TUI as an ancestor
+        pane = os.environ.get("HERDR_ENV") == "1" and foreground_pane()
+    except Exception:
+        pass  # a pane that closed mid-lookup, say: the title can still tell
+    return pane or title_pane(session)
 
 
 def title_pane(session):
-    """The one Codex pane whose title shows `session`'s thread id as an item of its own, else None.
-    Only that pane's TUI writes its title, and the id carries a millisecond timestamp and random bits."""
+    """The one Codex pane whose title ends with `session`'s thread id, its last item, else None. Only that pane's
+    TUI writes its title, and the id carries a millisecond timestamp and random bits. Only the last item counts:
+    a thread name, cut to the same length, can start with another session's id."""
     if not session or len(session) <= TITLE_ID:
         return None
     shown = session[:TITLE_ID] + "..."
@@ -88,7 +93,8 @@ def title_pane(session):
         agent["pane_id"]
         for agent in herdr("agent", "list")["agents"]
         if agent.get("agent") == "codex"
-        and shown in (item.strip() for item in str(agent.get("terminal_title_stripped") or "").split(" | "))
+        and str(agent.get("terminal_title_stripped") or "").rsplit(" | ", 1)[-1].strip() == shown
+        and (agent.get("agent_session") or {}).get("value") in (None, session)
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -682,19 +688,15 @@ def main():
     output = {}
     in_pane = os.environ.get("HERDR_ENV") == "1"  # plain codex runs commands and hooks outside the pane (#49)
     try:
-        if not in_pane and args.command in ("clear", "_clear-idle"):
-            return
         if args.command in ("name", "status", "ask", "request"):
             try:
                 pane = resolve_hook_pane()
             except Exception:
                 if in_pane:
                     raise
-                pane = None
+                return  # Herdr isn't answering, so there's no tab to label
             if not pane:
-                if in_pane:
-                    raise RuntimeError(UNBOUND)
-                return  # as in hook(): an unmatched session outside a pane's environment stays quiet
+                raise RuntimeError(UNBOUND)
             os.environ["HERDR_PANE_ID"] = pane
         if args.command == "hook":
             payload = json.load(sys.stdin)

@@ -41,8 +41,8 @@ context.
 Launch Codex as plain `codex`, and start agents with
 `herdr agent start <name> --kind codex --pane <pane-id>`. Codex runs its tools
 and hooks in its shared background server, outside the pane, so the label helper
-finds the pane by the thread id Codex shows in its title. Add `thread-id` to the
-title items in `~/.codex/config.toml` (here, Codex's defaults plus the id):
+finds the pane by the thread id Codex shows in its title. Add `thread-id` as the
+last title item in `~/.codex/config.toml` (here, Codex's defaults plus the id):
 
 ```toml
 [tui]
@@ -137,7 +137,7 @@ when Jev starts failing.
 | `HERDR_WORK_DIR` | the current directory | where `herdr-orchestrator` starts new sessions |
 | `HERDR_FLEET_QUEUE` | `~/.cache/herdr-fleet/queue` | briefs for `herdr-orchestrator next` |
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
-| `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
+| `HERDR_BIN_PATH` | `herdr` on PATH (the Codex helper also looks in `~/.local/bin`) | the Herdr CLI, if the hook's PATH lacks it |
 | `TYPESAFE_API_KEY`, then `jev.api_key` in `~/.config/team-floor/config.json` (keep it `chmod 600`), then the file named by `jev.api_key_file` (relative to that folder), by default `~/.config/typesafe/api-key` | none: add one (above) | the key for both Jev calls: the Stop hook asks whether a reply waits on you, and `route` asks for a brief's lane |
 | `TYPESAFE_API_URL` | TypeSafe's endpoint | where both Jev calls go (the Stop hook and `route`); the tests point it at a local fake |
 | `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |
