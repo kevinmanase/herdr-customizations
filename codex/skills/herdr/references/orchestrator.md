@@ -56,8 +56,8 @@ idle/done, the label is `⚪ ready`, and agent kind and working directory fit th
 task. Rename its Herdr agent and send a self-contained brief. For a new Codex
 worker, use the skill's `--kind codex` recipe, or queue a brief whose first line
 is `runtime: codex` and run `~/.claude/hooks/herdr-orchestrator next`: it starts
-plain `codex` in a fresh tab, groups it, and tells it how to label its tab and
-report. Without that line, `next` starts Claude.
+plain `codex` in a new tab (or a `⚪ ready` Codex tab), groups it, and tells it
+how to label its tab and report. Without that line, `next` starts Claude.
 
 Right after you merge a worker's PR, send that worker
 `Status from orchestrator: merged <repo>#<number>` with `herdr agent prompt`

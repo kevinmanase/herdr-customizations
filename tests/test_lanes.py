@@ -931,9 +931,22 @@ def test_a_brief_without_runtime_codex_gets_claude(herdr, queue, text, brief):
 def test_an_unknown_runtime_is_refused_and_the_brief_stays_queued(herdr, queue):
     (queue / "01-eng-5.md").write_text("runtime: gemini\n\nFix the login bug.")
     result = herdr.run(ORCHESTRATOR, "next")
-    assert result.returncode == 2
+    assert result.returncode == 4
     assert "01-eng-5.md asks for runtime 'gemini'; use claude or codex. It stays queued." in result.stderr
     assert not any(call[:2] in (["tab", "create"], ["agent", "start"]) for call in herdr.state.get("calls", []))
+    assert (queue / "01-eng-5.md").exists()
+
+
+def test_a_refused_brief_does_not_hold_up_the_ones_after_it(herdr, queue):
+    (queue / "01-eng-5.md").write_text("runtime: gemini\nFix the login bug.")
+    (queue / "02-eng-6.md").write_text("Runtime: Codex\r\n\r\nFix the signup bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert "01-eng-5.md asks for runtime 'gemini'" in result.stderr
+    (start,) = start_calls(herdr)
+    assert start[2] == "eng-6"
+    assert start[start.index("--kind") + 1] == "codex"
+    assert prompts(herdr, "eng-6")[0].startswith("Fix the signup bug.")
     assert (queue / "01-eng-5.md").exists()
 
 
@@ -949,3 +962,17 @@ def test_a_codex_brief_reuses_only_a_ready_codex_tab(herdr, queue, tmp_path):
     assert herdr.run(ORCHESTRATOR, "next").returncode == 0
     assert herdr.state["agents"]["eng-7"]["pane_id"] == "p4"
     assert ["agent", "prompt", "eng-7", "/rename eng-7"] in herdr.state["calls"]
+
+
+def test_a_lane_to_confirm_keeps_the_runtime_line_first(herdr, jev, lanes, queue):
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("runtime: codex\n\nFix the Stripe webhook retries.")
+    jev.answer("api", {"api": 0.52, "mobile": 0.3, "unclear": 0.18})
+    assert route(herdr, jev, brief).returncode == 0
+    assert (queue / "api/01-webhook-fix.md").read_text().startswith("runtime: codex\nLane to confirm:")
+    result = herdr.run(ORCHESTRATOR, "next", "--lane", "api")
+    assert result.returncode == 0, result.stderr
+    (start,) = start_calls(herdr)
+    assert start[start.index("--kind") + 1] == "codex"
+    (text,) = prompts(herdr, "webhook-fix")
+    assert text.startswith("Lane to confirm:")
