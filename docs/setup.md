@@ -40,9 +40,18 @@ context.
 
 Launch Codex as plain `codex`, and start agents with
 `herdr agent start <name> --kind codex --pane <pane-id>`. Codex runs its tools
-and hooks in its shared background server, so the label helper can't yet match
-a session to its pane and skips its labels
-([#49](https://github.com/kevinmanase/herdr-customizations/issues/49)).
+and hooks in its shared background server, outside the pane, so the label helper
+finds the pane by the thread id Codex shows in its title. Add `thread-id` as the
+last title item in `~/.codex/config.toml` (here, Codex's defaults plus the id):
+
+```toml
+[tui]
+terminal_title = ["activity", "thread-name", "project-name", "thread-id"]
+```
+
+Codex shows only the id's first 29 characters. The helper labels a tab only
+when exactly one Codex pane shows its session's id, and otherwise leaves every
+tab alone.
 
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one
@@ -128,7 +137,7 @@ when Jev starts failing.
 | `HERDR_WORK_DIR` | the current directory | where `herdr-orchestrator` starts new sessions |
 | `HERDR_FLEET_QUEUE` | `~/.cache/herdr-fleet/queue` | briefs for `herdr-orchestrator next` |
 | `FLEET_MIN_MB` | `1500` | free memory needed before opening another tab |
-| `HERDR_BIN_PATH` | `herdr` on PATH | the Herdr CLI, if the hook's PATH lacks it |
+| `HERDR_BIN_PATH` | `herdr` on PATH (the Codex helper also looks in `~/.local/bin`) | the Herdr CLI, if the hook's PATH lacks it |
 | `TYPESAFE_API_KEY`, then `jev.api_key` in `~/.config/team-floor/config.json` (keep it `chmod 600`), then the file named by `jev.api_key_file` (relative to that folder), by default `~/.config/typesafe/api-key` | none: add one (above) | the key for both Jev calls: the Stop hook asks whether a reply waits on you, and `route` asks for a brief's lane |
 | `TYPESAFE_API_URL` | TypeSafe's endpoint | where both Jev calls go (the Stop hook and `route`); the tests point it at a local fake |
 | `~/.config/team-floor/lanes.json` | none | the lanes, shared with the team floor: `{"lanes": [{"id", "name", "about"}]}` |

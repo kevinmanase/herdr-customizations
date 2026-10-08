@@ -33,13 +33,24 @@ REMINDER = (
 )
 FINISH_REMINDER = f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
 
+TITLE_ID = 29  # Codex cuts each terminal-title item to this many characters, then adds "..."
+
 UNBOUND = "This Codex session couldn't be matched to a Herdr pane, so labels were skipped."
 UNBOUND_REMINDER = f"Herdr: {UNBOUND} Do not rename tabs or change labels using inherited pane IDs or the focused tab."
 
 
+# Like agent-wire in wire_ask, look in ~/.local/bin too: the shared app server's PATH may lack it. Without a
+# pane's HERDR_SOCKET_PATH, the CLI uses Herdr's default socket.
+HERDR_BIN = (
+    os.environ.get("HERDR_BIN_PATH")
+    or shutil.which("herdr", path=os.environ.get("PATH", "") + os.pathsep + os.path.expanduser("~/.local/bin"))
+    or "herdr"
+)
+
+
 def herdr(*args, timeout=2):
     result = subprocess.run(
-        [os.environ.get("HERDR_BIN_PATH") or "herdr", *args],
+        [HERDR_BIN, *args],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -53,17 +64,43 @@ def herdr(*args, timeout=2):
 
 
 def resolve_hook_pane(payload=None):
-    """Bind a hook or explicit command to its foreground Codex process, never inherited pane IDs.
+    """Bind a hook or explicit command to its own pane, never inherited pane IDs or the focused tab.
 
-    Shared app-server threads have no trustworthy per-pane process ancestry.
-    Until they are bound by session id instead (#49), skip their automatic
-    metadata and labels. Explicit commands enforce the same binding.
+    An embedded Codex runs them under its foreground TUI process. Plain codex runs them in the
+    shared app server, so those bind by the thread id their TUI shows in its pane's title (#49).
     """
+    inherited = session = os.environ.get("CODEX_THREAD_ID")
     if payload is not None:
         session = payload.get("session_id")
-        inherited = os.environ.get("CODEX_THREAD_ID")
         if not session or payload.get("agent_id") or (inherited and inherited != session):
             return None
+    pane = None
+    try:  # only a caller in the pane's own environment can have the pane's TUI as an ancestor
+        pane = os.environ.get("HERDR_ENV") == "1" and foreground_pane()
+    except Exception:
+        pass  # a pane that closed mid-lookup, say: the title can still tell
+    return pane or title_pane(session)
+
+
+def title_pane(session):
+    """The one Codex pane whose title ends with `session`'s thread id, its last item, else None. Only that pane's
+    TUI writes its title, and the id carries a millisecond timestamp and random bits. Only the last item counts:
+    a thread name, cut to the same length, can start with another session's id."""
+    if not session or len(session) <= TITLE_ID:
+        return None
+    shown = session[:TITLE_ID] + "..."
+    matches = [
+        agent["pane_id"]
+        for agent in herdr("agent", "list")["agents"]
+        if agent.get("agent") == "codex"
+        and str(agent.get("terminal_title_stripped") or "").rsplit(" | ", 1)[-1].strip() == shown
+        and (agent.get("agent_session") or {}).get("value") in (None, session)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def foreground_pane():
+    """The pane whose foreground process is this caller's Codex TUI, else None."""
     ancestors = set()
     seen = set()
     pid = os.getppid()
@@ -569,9 +606,10 @@ def hook(payload):
     try:
         pane = resolve_hook_pane(payload)
     except Exception:
-        return output
+        pane = None
     if not pane:
-        return output
+        # Plain codex in no pane we can match, maybe outside Herdr altogether, stays quiet.
+        return output if os.environ.get("HERDR_ENV") == "1" else {}
     os.environ["HERDR_PANE_ID"] = pane
     if output:
         output["hookSpecificOutput"]["additionalContext"] = REMINDER
@@ -648,11 +686,15 @@ def main():
         worker.add_argument(field)
     args = parser.parse_args()
     output = {}
+    in_pane = os.environ.get("HERDR_ENV") == "1"  # plain codex runs commands and hooks outside the pane (#49)
     try:
-        if os.environ.get("HERDR_ENV") != "1":
-            return
         if args.command in ("name", "status", "ask", "request"):
-            pane = resolve_hook_pane()
+            try:
+                pane = resolve_hook_pane()
+            except Exception:
+                if in_pane:
+                    raise
+                return  # Herdr isn't answering, so there's no tab to label
             if not pane:
                 raise RuntimeError(UNBOUND)
             os.environ["HERDR_PANE_ID"] = pane
