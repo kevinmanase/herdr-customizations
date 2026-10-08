@@ -148,8 +148,12 @@ def route(herdr, jev, brief, key="test-key"):
     return herdr.run(ORCHESTRATOR, "route", str(brief), TYPESAFE_API_KEY=key, TYPESAFE_API_URL=jev.url)
 
 
+def start_calls(herdr):
+    return [call for call in herdr.state.get("calls", []) if call[:2] == ["agent", "start"]]
+
+
 def started(herdr):
-    return [call[2] for call in herdr.state.get("calls", []) if call[:2] == ["agent", "start"]]
+    return [call[2] for call in start_calls(herdr)]
 
 
 def prompts(herdr, name):
@@ -311,12 +315,12 @@ def test_jev_unavailable_starts_no_lead(herdr, jev, lanes, queue):
     assert started(herdr) == []
 
 
-def ready_tab(herdr, tmp_path):
+def ready_tab(herdr, tmp_path, tab="t2", pane="p2", agent="claude"):
     herdr.set_state(
-        tabs={**herdr.state["tabs"], "t2": "⚪ ready"},
+        tabs={**herdr.state["tabs"], tab: "⚪ ready"},
         panes=[
             *herdr.state["panes"],
-            {"pane_id": "p2", "tab_id": "t2", "agent": "claude", "cwd": str(tmp_path), "agent_status": "idle"},
+            {"pane_id": pane, "tab_id": tab, "agent": agent, "cwd": str(tmp_path), "agent_status": "idle"},
         ],
     )
 
@@ -876,3 +880,99 @@ def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
     result = herdr.run(ORCHESTRATOR, "next")
     assert result.returncode == 0, result.stderr
     assert herdr.state["agents"]["eng-1"]["pane_id"] == "p2"
+
+
+# A brief can ask for Codex with a `runtime:` first line. Without one, the worker is Claude, as before.
+
+CODEX_HELPER = "python3 ~/.codex/skills/herdr/scripts/herdr-tab.py"
+
+
+@pytest.mark.parametrize("lane,supervisor", [(None, "orchestrator"), ("api", "api-lead")])
+def test_a_codex_brief_starts_plain_codex_where_a_claude_worker_would_go(
+    herdr, queue, grouping_cli, tmp_path, lane, supervisor
+):
+    folder = queue / lane if lane else queue
+    folder.mkdir(exist_ok=True)
+    (folder / "01-eng-2.md").write_text("runtime: codex\n\nFix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next", *(["--lane", lane] if lane else []))
+    assert result.returncode == 0, result.stderr
+    (create,) = [call for call in herdr.state["calls"] if call[:2] == ["tab", "create"]]
+    assert create[create.index("--cwd") + 1] == str(tmp_path)
+    (start,) = start_calls(herdr)
+    assert start[start.index("--kind") + 1] == "codex"
+    assert "-n" not in start  # Claude's session-name flag; Codex has none
+    assert json.loads(grouping_cli.read_text()) == ["assign", "eng-2", supervisor]
+    (brief,) = prompts(herdr, "eng-2")
+    assert brief.startswith("Fix the login bug.")
+    assert "runtime:" not in brief
+    assert CODEX_HELPER in brief
+    assert f'herdr agent prompt {supervisor} "Status from eng-2: ' in brief
+    assert ("send it your one-line updates" in brief) == bool(lane)
+    assert (folder / "started/01-eng-2.md").exists()
+
+
+@pytest.mark.parametrize(
+    "text,brief",
+    [
+        ("runtime: claude\nFix the login bug.", "Fix the login bug."),
+        ("Fix the login bug.\nruntime: codex comes later.", "Fix the login bug.\nruntime: codex comes later."),
+    ],
+    ids=["named", "unnamed"],
+)
+def test_a_brief_without_runtime_codex_gets_claude(herdr, queue, text, brief):
+    (queue / "01-eng-3.md").write_text(text)
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    (start,) = start_calls(herdr)
+    assert start[start.index("--kind") + 1] == "claude"
+    assert prompts(herdr, "eng-3") == [brief]
+
+
+def test_an_unknown_runtime_is_refused_and_the_brief_stays_queued(herdr, queue):
+    (queue / "01-eng-5.md").write_text("runtime: gemini\n\nFix the login bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 4
+    assert "01-eng-5.md asks for runtime 'gemini'; use claude or codex. It stays queued." in result.stderr
+    assert not any(call[:2] in (["tab", "create"], ["agent", "start"]) for call in herdr.state.get("calls", []))
+    assert (queue / "01-eng-5.md").exists()
+
+
+def test_a_refused_brief_does_not_hold_up_the_ones_after_it(herdr, queue):
+    (queue / "01-eng-5.md").write_text("runtime: gemini\nFix the login bug.")
+    (queue / "02-eng-6.md").write_text("Runtime: Codex\r\n\r\nFix the signup bug.")
+    result = herdr.run(ORCHESTRATOR, "next")
+    assert result.returncode == 0, result.stderr
+    assert "01-eng-5.md asks for runtime 'gemini'" in result.stderr
+    (start,) = start_calls(herdr)
+    assert start[2] == "eng-6"
+    assert start[start.index("--kind") + 1] == "codex"
+    assert prompts(herdr, "eng-6")[0].startswith("Fix the signup bug.")
+    assert (queue / "01-eng-5.md").exists()
+
+
+def test_a_codex_brief_reuses_only_a_ready_codex_tab(herdr, queue, tmp_path):
+    ready_tab(herdr, tmp_path)  # a ⚪ ready Claude tab: not for Codex
+    (queue / "01-eng-6.md").write_text("runtime: codex\nFirst.")
+    assert herdr.run(ORCHESTRATOR, "next").returncode == 0
+    assert herdr.state["agents"]["eng-6"]["pane_id"] != "p2"
+    assert herdr.label("t2") == "⚪ ready"
+
+    ready_tab(herdr, tmp_path, "t4", "p4", "codex")
+    (queue / "02-eng-7.md").write_text("runtime: codex\nSecond.")
+    assert herdr.run(ORCHESTRATOR, "next").returncode == 0
+    assert herdr.state["agents"]["eng-7"]["pane_id"] == "p4"
+    assert ["agent", "prompt", "eng-7", "/rename eng-7"] in herdr.state["calls"]
+
+
+def test_a_lane_to_confirm_keeps_the_runtime_line_first(herdr, jev, lanes, queue):
+    brief = queue / "01-webhook-fix.md"
+    brief.write_text("runtime: codex\n\nFix the Stripe webhook retries.")
+    jev.answer("api", {"api": 0.52, "mobile": 0.3, "unclear": 0.18})
+    assert route(herdr, jev, brief).returncode == 0
+    assert (queue / "api/01-webhook-fix.md").read_text().startswith("runtime: codex\nLane to confirm:")
+    result = herdr.run(ORCHESTRATOR, "next", "--lane", "api")
+    assert result.returncode == 0, result.stderr
+    (start,) = start_calls(herdr)
+    assert start[start.index("--kind") + 1] == "codex"
+    (text,) = prompts(herdr, "webhook-fix")
+    assert text.startswith("Lane to confirm:")

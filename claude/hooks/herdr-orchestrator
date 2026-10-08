@@ -4,7 +4,7 @@
     herdr-orchestrator who             print the orchestrator's tab and state; exit 1 if there is none
     herdr-orchestrator claim           make the calling Claude session the orchestrator, taking the role over
     herdr-orchestrator ensure          recover only a confirmed vacant 👑 tab; defer uncertain identity
-    herdr-orchestrator next [--lane L] start the next queued brief in a ⚪ ready Claude tab, or a new tab
+    herdr-orchestrator next [--lane L] start the next queued brief in a ⚪ ready tab, or a new tab
     herdr-orchestrator route <brief>   ask Jev which lane a queued brief belongs to, and move it there
     herdr-orchestrator leads           one line per lane; start a lead where a lane is busy
     herdr-orchestrator lead <lane> --prompt-file <file> [--from-agent <name>]
@@ -23,8 +23,10 @@ GitHub and the tabs each time.
 
 `next` takes the first brief by name (<order>-<agent-name>.md, one self-contained brief each) from
 QUEUE and from the queue of any lane that has no lead. `next --lane L` takes only from QUEUE/L/, for
-that lane's lead. It exits 0 when it starts one or the queue is empty, and 3 when memory is short.
-New sessions start in HERDR_WORK_DIR, or the current directory.
+that lane's lead. It exits 0 when it starts one or the queue is empty, 3 when memory is short, and 4
+when every queued brief asks for a runtime other than claude or codex; those stay queued, and `next`
+skips them. New sessions start in HERDR_WORK_DIR, or the current directory. A brief whose first line is
+`runtime: codex` gets plain `codex` instead of Claude.
 
 Lanes come from LANES, a file the team floor reads too: {"lanes": [{"id", "name", "about"}]}.
 `route` asks Jev a choice question over the lane ids plus `unclear`, sending at most the
@@ -110,6 +112,14 @@ AGENT_NAME = re.compile(r"chat-agent@[^\x00-\x1f\x7f]{1,64}")
 LANE_NOTE = (
     "\n\nThis brief is in the {lane} lane. While {lead} runs, send it your one-line updates "
     "instead of the orchestrator."
+)
+RUNTIMES = ("claude", "codex")
+# Codex's own SessionStart hook covers labels; briefs are written for Claude, and the supervisor is Claude.
+CODEX_NOTE = (
+    "\n\nYou are a Codex worker, {name}. Where this brief says `herdr-tab`, run "
+    "`python3 ~/.codex/skills/herdr/scripts/herdr-tab.py` with the same command, as the `herdr` skill says. "
+    "{supervisor} is a Claude session, so SendMessage can't reach it: send it each one-line update with "
+    '`herdr agent prompt {supervisor} "Status from {name}: <update>"`, quoting the update safely.'
 )
 
 
@@ -321,12 +331,13 @@ def retrying(tries, codes, *args, timeout=10):
         time.sleep(SHELL_WAIT)
 
 
-def start_in_new_tab(name, pane):
-    """Start Claude in a new tab's pane, waiting while its shell is still starting."""
+def start_in_new_tab(name, pane, kind="claude"):
+    """Start Claude or Codex in a new tab's pane, waiting while its shell is still starting."""
+    named = ["--", "-n", name] if kind == "claude" else []  # Codex has no session-name flag
     try:
         retrying(
             SHELL_TRIES, ("agent_pane_busy",),
-            "agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000", "--", "-n", name,
+            "agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", "120000", *named,
             timeout=150,
         )  # fmt: skip
     except RuntimeError as error:
@@ -339,8 +350,9 @@ def prompt_when_ready(name, text):
     retrying(READY_TRIES, ("agent_pane_busy", "agent_not_ready"), "agent", "prompt", name, text)
 
 
-def start_session(name, label=None):
-    """Start a fresh Claude session named `name`, reusing a ⚪ ready tab first. Its pane, or None if memory is short."""
+def start_session(name, label=None, kind="claude"):
+    """Start a fresh `kind` session named `name`, reusing a ⚪ ready tab of that kind first. Its pane, or None if
+    memory is short."""
     # A cleared session is already running and fresh, so reusing one costs no memory.
     workspace = os.environ.get("HERDR_WORKSPACE_ID")
     # `next` and a lead started on demand can run at once, so pick and relabel under one lock: the tab stops
@@ -352,7 +364,7 @@ def start_session(name, label=None):
                 p
                 for p in herdr("pane", "list")["panes"]
                 if p["tab_id"] in ready
-                and p.get("agent") == "claude"
+                and p.get("agent") == kind
                 and p.get("cwd") == WORK_DIR
                 and (not workspace or p.get("workspace_id", workspace) == workspace)
                 and p.get("agent_status") in ("idle", "done")
@@ -378,7 +390,7 @@ def start_session(name, label=None):
     tab = herdr("tab", "create", "--workspace", workspace, "--label", label or name, "--cwd", WORK_DIR, "--no-focus")
     pane = tab["root_pane"]["pane_id"]
     try:
-        start_in_new_tab(name, pane)
+        start_in_new_tab(name, pane, kind)
     except Exception:  # the brief stays queued, so the next try opens its own tab
         with contextlib.suppress(Exception):
             herdr("tab", "close", tab["tab"]["tab_id"])
@@ -387,7 +399,7 @@ def start_session(name, label=None):
 
 
 def next_brief(*args):
-    """Start the next queued brief in a fresh Claude session."""
+    """Start the next queued brief in a fresh Claude session, or a Codex one if its first line asks."""
     lane = args[1] if len(args) == 2 and args[0] == "--lane" else None
     if args and not (lane and LANE_ID.fullmatch(lane)):
         print("usage: herdr-orchestrator next [--lane <lane>]", file=sys.stderr)
@@ -407,15 +419,22 @@ def next_brief(*args):
         if not queued:
             print("fleet: queue empty")
             return 0
-        brief, folder = queued[0]
+        for brief, folder in queued:  # a brief with an unknown runtime stays queued, and the next one goes
+            path = os.path.join(folder, brief)
+            with open(path, encoding="utf-8") as handle:
+                kind, text = runtime(handle.read())
+            if kind in RUNTIMES:
+                break
+            print(f"fleet: {brief} asks for runtime {kind!r}; use claude or codex. It stays queued.", file=sys.stderr)
+        else:
+            return 4
         name = agent_name(brief)
-        path = os.path.join(folder, brief)
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
         supervisor = lane_lead(lane)[1] if lane else NAME
         if lane:
             text += LANE_NOTE.format(lane=lane, lead=supervisor)
-        pane = start_session(name)
+        if kind == "codex":
+            text += CODEX_NOTE.format(name=name, supervisor=supervisor)
+        pane = start_session(name, kind=kind)
         if not pane:
             return 3
         group_session(name, supervisor)
@@ -424,6 +443,18 @@ def next_brief(*args):
         os.rename(path, os.path.join(folder, "started", brief))
         print(f"fleet: started {name} in pane {pane}")
     return 0
+
+
+def runtime_line(text):
+    """A brief's optional first line, `runtime: codex`, with its line end ("" if it has none), and the rest."""
+    first, newline, rest = text.partition("\n")
+    return (first + newline, rest) if first.partition(":")[0].strip().lower() == "runtime" else ("", text)
+
+
+def runtime(text):
+    """The runtime a brief asks for, and the brief without its runtime line."""
+    line, rest = runtime_line(text)
+    return (line.partition(":")[2].strip().lower(), rest.lstrip("\r\n")) if line else ("claude", text)
 
 
 GROUPS_WARNED = False
@@ -631,10 +662,11 @@ def route(path=None):
         except FileNotFoundError:
             print(f"route: {path} was started or moved while Jev answered; nothing routed", file=sys.stderr)
             return 1
-        if rule == "confirm":
+        if rule == "confirm":  # after the runtime line, which `next` reads only at the top
+            line, rest = runtime_line(brief)
             brief = (
-                f"Lane to confirm: Jev put this brief in the {lane.get('name') or choice} lane with probability "
-                f"{shown}. Check that it belongs there before you start it.\n\n" + brief
+                f"{line}Lane to confirm: Jev put this brief in the {lane.get('name') or choice} lane with "
+                f"probability {shown}. Check that it belongs there before you start it.\n\n" + rest
             )
         folder = os.path.join(QUEUE, choice)
         os.makedirs(folder, exist_ok=True)

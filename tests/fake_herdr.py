@@ -95,7 +95,7 @@ match args:
         done({})
     case ["agent", "start", name, *rest]:
         pane_id = rest[rest.index("--pane") + 1]
-        pane(pane_id)["agent"] = "claude"
+        pane(pane_id)["agent"] = rest[rest.index("--kind") + 1]
         state.setdefault("queue_lock_free_during_start", []).append(queue_lock_free())
         state.setdefault("agents", {})[name] = {**pane(pane_id), "name": name}
         if state.pop("start_not_ready", False):
