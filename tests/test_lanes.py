@@ -148,8 +148,12 @@ def route(herdr, jev, brief, key="test-key"):
     return herdr.run(ORCHESTRATOR, "route", str(brief), TYPESAFE_API_KEY=key, TYPESAFE_API_URL=jev.url)
 
 
+def start_calls(herdr):
+    return [call for call in herdr.state.get("calls", []) if call[:2] == ["agent", "start"]]
+
+
 def started(herdr):
-    return [call[2] for call in herdr.state.get("calls", []) if call[:2] == ["agent", "start"]]
+    return [call[2] for call in start_calls(herdr)]
 
 
 def prompts(herdr, name):
@@ -311,12 +315,12 @@ def test_jev_unavailable_starts_no_lead(herdr, jev, lanes, queue):
     assert started(herdr) == []
 
 
-def ready_tab(herdr, tmp_path):
+def ready_tab(herdr, tmp_path, tab="t2", pane="p2", agent="claude"):
     herdr.set_state(
-        tabs={**herdr.state["tabs"], "t2": "⚪ ready"},
+        tabs={**herdr.state["tabs"], tab: "⚪ ready"},
         panes=[
             *herdr.state["panes"],
-            {"pane_id": "p2", "tab_id": "t2", "agent": "claude", "cwd": str(tmp_path), "agent_status": "idle"},
+            {"pane_id": pane, "tab_id": tab, "agent": agent, "cwd": str(tmp_path), "agent_status": "idle"},
         ],
     )
 
@@ -617,14 +621,14 @@ def test_a_lead_name_already_held_is_left_alone(herdr, held):
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "lane lead" not in context
     assert herdr.state["agents"]["api-lead"] == held
-    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state.get("calls", []))
+    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
 
 
 def test_a_herdr_error_is_not_a_missing_lead(herdr):
     herdr.set_state(tabs={**herdr.state["tabs"], "t1": "✅ 🧭 api-lead"}, fail={"agent get api-lead": "timeout"})
     result = herdr.run(TAB, "hook", "session", stdin='{"source": "startup"}')
     assert "lane lead" not in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state.get("calls", []))
+    assert not any(call[:2] == ["agent", "rename"] for call in herdr.state["calls"])
 
 
 @pytest.mark.parametrize(
@@ -883,10 +887,6 @@ def test_next_reuses_a_ready_tab_without_a_workspace_id(herdr, queue, tmp_path):
 CODEX_HELPER = "python3 ~/.codex/skills/herdr/scripts/herdr-tab.py"
 
 
-def start_calls(herdr):
-    return [call for call in herdr.state["calls"] if call[:2] == ["agent", "start"]]
-
-
 @pytest.mark.parametrize("lane,supervisor", [(None, "orchestrator"), ("api", "api-lead")])
 def test_a_codex_brief_starts_plain_codex_where_a_claude_worker_would_go(
     herdr, queue, grouping_cli, tmp_path, lane, supervisor
@@ -911,21 +911,21 @@ def test_a_codex_brief_starts_plain_codex_where_a_claude_worker_would_go(
     assert (folder / "started/01-eng-2.md").exists()
 
 
-def test_a_claude_brief_may_name_its_runtime(herdr, queue):
-    (queue / "01-eng-3.md").write_text("runtime: claude\nFix the login bug.")
+@pytest.mark.parametrize(
+    "text,brief",
+    [
+        ("runtime: claude\nFix the login bug.", "Fix the login bug."),
+        ("Fix the login bug.\nruntime: codex comes later.", "Fix the login bug.\nruntime: codex comes later."),
+    ],
+    ids=["named", "unnamed"],
+)
+def test_a_brief_without_runtime_codex_gets_claude(herdr, queue, text, brief):
+    (queue / "01-eng-3.md").write_text(text)
     result = herdr.run(ORCHESTRATOR, "next")
     assert result.returncode == 0, result.stderr
     (start,) = start_calls(herdr)
     assert start[start.index("--kind") + 1] == "claude"
-    assert prompts(herdr, "eng-3") == ["Fix the login bug."]
-
-
-def test_a_brief_without_a_runtime_line_is_unchanged(herdr, queue):
-    (queue / "01-eng-4.md").write_text("Fix the login bug.\nruntime: codex is mentioned later, not first.")
-    assert herdr.run(ORCHESTRATOR, "next").returncode == 0
-    (start,) = start_calls(herdr)
-    assert start[start.index("--kind") + 1] == "claude"
-    assert prompts(herdr, "eng-4") == ["Fix the login bug.\nruntime: codex is mentioned later, not first."]
+    assert prompts(herdr, "eng-3") == [brief]
 
 
 def test_an_unknown_runtime_is_refused_and_the_brief_stays_queued(herdr, queue):
@@ -944,13 +944,7 @@ def test_a_codex_brief_reuses_only_a_ready_codex_tab(herdr, queue, tmp_path):
     assert herdr.state["agents"]["eng-6"]["pane_id"] != "p2"
     assert herdr.label("t2") == "⚪ ready"
 
-    herdr.set_state(
-        tabs={**herdr.state["tabs"], "t4": "⚪ ready"},
-        panes=[
-            *herdr.state["panes"],
-            {"pane_id": "p4", "tab_id": "t4", "agent": "codex", "cwd": str(tmp_path), "agent_status": "idle"},
-        ],
-    )
+    ready_tab(herdr, tmp_path, "t4", "p4", "codex")
     (queue / "02-eng-7.md").write_text("runtime: codex\nSecond.")
     assert herdr.run(ORCHESTRATOR, "next").returncode == 0
     assert herdr.state["agents"]["eng-7"]["pane_id"] == "p4"

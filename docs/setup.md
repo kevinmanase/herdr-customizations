@@ -157,11 +157,9 @@ In the Claude session you want as the orchestrator:
 
 From then on, the hooks keep exactly one running. To hand it work, write a
 self-contained brief to `~/.cache/herdr-fleet/queue/<order>-<agent-name>.md` and
-run `~/.claude/hooks/herdr-orchestrator next`. It starts a Claude session; for
-Codex, make the brief's first line `runtime: codex`. `next` then starts plain
-`codex` the same way, and sends the brief after it, since Herdr won't pass a
-multi-line prompt on Codex's command line. The worker labels its tab only once
-Codex shows `thread-id` in its title (see Codex terminal sessions).
+run `~/.claude/hooks/herdr-orchestrator next`. It starts a Claude session, or
+plain `codex` when the brief's first line is `runtime: codex` (set up Codex's
+title as in Codex terminal sessions, so its tab can label itself).
 
 With lanes set up, route the brief first, and check the lanes now and then:
 

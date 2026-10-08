@@ -112,16 +112,12 @@ LANE_NOTE = (
     "\n\nThis brief is in the {lane} lane. While {lead} runs, send it your one-line updates "
     "instead of the orchestrator."
 )
-RUNTIME = re.compile(r"runtime:[ \t]*(\S*)[ \t]*(?:\n|$)")  # a brief's optional first line
-RUNTIMES = ("claude", "codex")
-# What Claude's SessionStart hook tells a worker, for Codex: its own helper, and Herdr prompts instead of SendMessage.
+# Codex's own SessionStart hook covers labels; briefs are written for Claude, and the supervisor is Claude.
 CODEX_NOTE = (
-    "\n\nYou are a Codex worker, {name}. Load the `herdr` skill. Where this brief says "
-    "`~/.claude/hooks/herdr-tab`, run `python3 ~/.codex/skills/herdr/scripts/herdr-tab.py` with the same "
-    "command: name your tab in a few words led by a stage emoji, flag Kevin with `ask` or `request` before "
-    "you wait on him, and run `status clean` last when the task is finished. {supervisor} is a Claude "
-    "session, so SendMessage can't reach it: send it each one-line update (when you merge, get blocked, "
-    'finish, or start another session) with `herdr agent prompt {supervisor} "Status from {name}: <update>"`.'
+    "\n\nYou are a Codex worker, {name}. Where this brief says `herdr-tab`, run "
+    "`python3 ~/.codex/skills/herdr/scripts/herdr-tab.py` with the same command, as the `herdr` skill says. "
+    "{supervisor} is a Claude session, so SendMessage can't reach it: send it each one-line update with "
+    '`herdr agent prompt {supervisor} "Status from {name}: <update>"`.'
 )
 
 
@@ -426,13 +422,13 @@ def next_brief(*args):
         path = os.path.join(folder, brief)
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
-        runtime = RUNTIME.match(text)
-        kind = runtime.group(1) if runtime else "claude"
-        if kind not in RUNTIMES:
+        first, _, rest = text.partition("\n")
+        kind = "claude"
+        if first.startswith("runtime:"):  # a brief's optional first line
+            kind, text = first[len("runtime:") :].strip(), rest.lstrip("\n")
+        if kind not in ("claude", "codex"):
             print(f"fleet: {brief} asks for runtime {kind!r}; use claude or codex. It stays queued.", file=sys.stderr)
             return 2
-        if runtime:
-            text = text[runtime.end() :].lstrip("\n")
         supervisor = lane_lead(lane)[1] if lane else NAME
         if lane:
             text += LANE_NOTE.format(lane=lane, lead=supervisor)
