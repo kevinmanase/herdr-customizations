@@ -40,9 +40,18 @@ context.
 
 Launch Codex as plain `codex`, and start agents with
 `herdr agent start <name> --kind codex --pane <pane-id>`. Codex runs its tools
-and hooks in its shared background server, so the label helper can't yet match
-a session to its pane and skips its labels
-([#49](https://github.com/kevinmanase/herdr-customizations/issues/49)).
+and hooks in its shared background server, outside the pane, so the label helper
+finds the pane by the thread id Codex shows in its title. Add `thread-id` to the
+title items in `~/.codex/config.toml` (here, Codex's defaults plus the id):
+
+```toml
+[tui]
+terminal_title = ["activity", "thread-name", "project-name", "thread-id"]
+```
+
+Codex shows only the id's first 29 characters. The helper labels a tab only
+when exactly one Codex pane shows its session's id, and otherwise leaves every
+tab alone.
 
 Keep Claude's Stop hook synchronous, as in the example (no `"async"`). Claude
 Code takes the next prompt only after it returns, so Jev's answer about one

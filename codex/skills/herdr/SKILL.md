@@ -92,14 +92,14 @@ clear it. Use `status working` when Kevin responds or the request is resolved.
 The prompt hook clears it only for Kevin's own prompt, not a peer's `Status from …` or `<cross-session-message …>`. All commands are no-ops outside Herdr.
 The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
-process against Herdr's pane process list. Inherited pane IDs and the focused
-tab are never sufficient. Plain `codex` runs its tools and hooks in the shared
-app server, without Herdr's environment, so they act as if outside Herdr: its
-tabs get no labels yet
-([#49](https://github.com/kevinmanase/herdr-customizations/issues/49)).
-Inside Herdr, an ambiguous match or an app-server process gets no label
-writes, explicit commands report the missing binding, and root session and
-prompt hooks explain the limitation. Subagent hooks do not adopt the
+process against Herdr's pane process list. Plain `codex` runs its tools and
+hooks in the shared app server, without Herdr's environment; those bind to the
+one Codex pane whose title shows their session's thread id (`thread-id` in
+`tui.terminal_title`). Inherited pane IDs and the focused tab are never
+sufficient. With no match, or more than one, nothing is labelled: inside the
+pane's environment explicit commands report the missing binding and root
+session and prompt hooks explain it, and from the app server they stay quiet.
+Subagent hooks do not adopt the
 parent tab; subagents must leave the parent's labels to its owning agent. The
 helper does not start other agents.
 

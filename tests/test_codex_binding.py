@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +29,7 @@ def codex(monkeypatch):
         ],
         "foreground": {"other": [300], "mine": [200]},
         "tabs": {"other-tab": "⏳ another task", "my-tab": "⏳ 🔍 login fix"},
+        "titles": {"other": "Development | 01a11d70-0000-7000-8000-00000...", "mine": "Development"},
         "calls": [],
     }
 
@@ -40,6 +42,14 @@ def codex(monkeypatch):
         match args:
             case ("pane", "list"):
                 return {"panes": state["panes"]}
+            case ("agent", "list"):
+                return {
+                    "agents": [
+                        {**pane, "terminal_title_stripped": state["titles"].get(pane["pane_id"])}
+                        for pane in state["panes"]
+                        if pane.get("agent")
+                    ]
+                }
             case ("pane", "process-info", "--pane", pane):
                 return {"process_info": {"foreground_processes": [{"pid": pid} for pid in state["foreground"][pane]]}}
             case ("pane", "get", pane):
@@ -111,19 +121,100 @@ def test_explicit_label_commands_refuse_uncertain_targets(codex, monkeypatch, ca
     assert label_writes(state) == []
 
 
-@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
-def test_a_daemon_session_without_herdr_env_changes_nothing(codex, monkeypatch, capsys, command):
-    # Plain codex runs tools and hooks in the shared app server, which has no HERDR_* variables (#49).
+DAEMON = "1 /usr/local/bin/codex app-server --listen unix:// --managed-daemon"
+THREAD = "01a11d74-c2c2-7420-a7eb-39b01f2e3c4d"
+SHOWN = THREAD[:29] + "..."  # Codex cuts each terminal-title item to 29 characters plus "..."
+
+
+@pytest.fixture
+def daemon(codex, monkeypatch):
+    """Plain codex: tools and hooks run in the shared app server, with no HERDR_* variables (#49)."""
     helper, state = codex
-    monkeypatch.delenv("HERDR_ENV")
-    state["processes"][200] = "1 /usr/local/bin/codex app-server --listen unix:// --managed-daemon"
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), *command])
-    monkeypatch.setattr(sys, "stdin", io.StringIO('{"hook_event_name":"UserPromptSubmit","session_id":"session-1"}'))
+    for name in ("HERDR_ENV", "HERDR_PANE_ID"):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("CODEX_THREAD_ID", THREAD)
+    state["processes"][200] = DAEMON
+    state["titles"]["mine"] = f"Development | {SHOWN}"
+    return helper, state
+
+
+def run_hook(helper, monkeypatch, capsys, payload):
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "hook"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    helper.main()
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_daemon_command_binds_by_the_thread_id_in_its_pane_title(daemon, monkeypatch):
+    helper, state = daemon
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "name", "🧪 login fix"])
 
     helper.main()
 
+    assert label_writes(state) == [("tab", "rename", "my-tab", "⏳ 🧪 login fix")]
+
+
+def test_a_daemon_hook_binds_by_its_payload_session_id(daemon, monkeypatch, capsys):
+    helper, state = daemon
+    monkeypatch.delenv("CODEX_THREAD_ID")  # hooks run with the daemon's own environment
+    state["tabs"]["my-tab"] = "✅ 🔍 login fix"
+
+    output = run_hook(helper, monkeypatch, capsys, {"hook_event_name": "UserPromptSubmit", "session_id": THREAD})
+
+    assert state["tabs"]["my-tab"] == "⏳ 🔍 login fix"
+    assert f'python3 "{SCRIPT}" name' in output["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize(
+    "case", ["no-title", "ambiguous", "not-codex", "inside-another-item", "short-session", "other-thread"]
+)
+@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
+def test_a_daemon_session_without_exactly_one_title_match_changes_nothing(daemon, monkeypatch, capsys, case, command):
+    helper, state = daemon
+    if case == "no-title":
+        state["titles"]["mine"] = "Development"
+    elif case == "ambiguous":
+        state["titles"]["other"] = f"Development | {SHOWN}"
+    elif case == "not-codex":
+        state["panes"][1]["agent"] = "claude"
+    elif case == "inside-another-item":
+        state["titles"]["mine"] = f"check {SHOWN} | Development"
+    elif case == "short-session":
+        monkeypatch.setenv("CODEX_THREAD_ID", THREAD[:20])
+        state["titles"]["mine"] = f"Development | {THREAD[:20]}"
+    else:
+        monkeypatch.setenv("CODEX_THREAD_ID", THREAD[:-1] + "e")
+        state["titles"]["mine"] = f"Development | {THREAD[:28]}f..."
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), *command])
+    payload = {"hook_event_name": "UserPromptSubmit", "session_id": helper.os.environ["CODEX_THREAD_ID"]}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    helper.main()
+
+    # Outside a pane's own environment an unmatched session stays quiet, as before #49.
     assert capsys.readouterr().out.strip() == ("{}" if command == ["hook"] else "")
-    assert state["calls"] == []
+    assert label_writes(state) == []
+
+
+def test_a_daemon_session_without_herdr_running_stays_quiet(daemon, monkeypatch, capsys):
+    helper, state = daemon
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("herdr")
+
+    monkeypatch.setattr(helper, "herdr", missing)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "name", "🧪 login fix"])
+
+    helper.main()
+
+    assert capsys.readouterr() == ("", "")
+
+
+def test_an_embedded_session_still_binds_by_its_foreground_process(codex):
+    helper, state = codex
+    state["titles"]["other"] = "Development | " + SHOWN  # a title never overrides the process binding
+
+    assert helper.resolve_hook_pane() == "mine"
 
 
 def test_a_stage_rename_keeps_the_pending_ask(codex, monkeypatch):
