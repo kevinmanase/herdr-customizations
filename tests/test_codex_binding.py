@@ -105,7 +105,9 @@ def test_explicit_label_commands_refuse_uncertain_targets(codex, monkeypatch, ca
         helper.main()
 
     assert error.value.code == 1
-    assert "Cannot bind this Codex process" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "couldn't be matched to a Herdr pane" in err
+    assert "no-daemon" not in err
     assert label_writes(state) == []
 
 
@@ -149,8 +151,9 @@ def test_unbound_root_keeps_targeted_context_without_commands_or_writes(codex, m
     output = helper.hook({"hook_event_name": event, "session_id": "session-1", "source": "startup"})
 
     context = output["hookSpecificOutput"]["additionalContext"]
-    assert "automatic labels were skipped" in context
+    assert "couldn't be matched to a Herdr pane, so labels were skipped" in context
     assert "inherited pane IDs" in context
+    assert "no-daemon" not in context
     assert "python3" not in context
     assert label_writes(state) == []
 

@@ -34,10 +34,8 @@ REMINDER = (
 FINISH_REMINDER = f'When the task is finished, run python3 "{SCRIPT}" status clean last, for 🧹.'
 
 UNBOUND_REMINDER = (
-    "Herdr: this Codex session could not be matched to one foreground Herdr pane, so automatic labels were skipped. "
-    "Do not rename tabs or change labels using inherited pane IDs or the focused tab. "
-    "For terminal sessions, launch codex --no-daemon, or resume the saved session with --no-daemon. "
-    "Shared app-server sessions need a verified session-to-pane binding before label commands can work."
+    "Herdr: this Codex session couldn't be matched to a Herdr pane, so labels were skipped. "
+    "Do not rename tabs or change labels using inherited pane IDs or the focused tab."
 )
 
 
@@ -658,10 +656,7 @@ def main():
         if args.command in ("name", "status", "ask", "request"):
             pane = resolve_hook_pane()
             if not pane:
-                raise RuntimeError(
-                    "Cannot bind this Codex process to one foreground Herdr pane; no labels were changed. "
-                    "Launch or resume terminal Codex with --no-daemon."
-                )
+                raise RuntimeError("This Codex session couldn't be matched to a Herdr pane, so labels were skipped.")
             os.environ["HERDR_PANE_ID"] = pane
         if args.command == "hook":
             payload = json.load(sys.stdin)

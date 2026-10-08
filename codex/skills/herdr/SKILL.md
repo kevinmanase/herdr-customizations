@@ -94,11 +94,11 @@ The helper resolves the pane's current tab so a moved pane does not rename its
 old tab. Hooks and explicit label commands first verify the foreground Codex
 process against Herdr's pane process list. Inherited pane IDs and the focused
 tab are never sufficient. An ambiguous match or an app-server session gets no
-label writes; explicit commands report the missing binding. Run terminal Codex
-with `--no-daemon` so its tools and hooks belong to the foreground process.
-For an existing conversation, exit Codex and run
-`codex resume <session-id> --no-daemon` in its terminal; this preserves the chat.
-Root session and prompt hooks still explain that limitation. Subagent hooks do not adopt the
+label writes; explicit commands report the missing binding. Codex's shared
+background server runs tools and hooks outside the pane and without Herdr's
+environment, so its sessions get no labels for now and its hooks stay silent.
+In the other unbound cases, root session and prompt hooks explain the
+limitation. Subagent hooks do not adopt the
 parent tab; subagents must leave the parent's labels to its owning agent. The
 helper does not start other agents.
 
@@ -207,7 +207,7 @@ For a requested new tab and Codex agent:
    `herdr tab create --workspace "$HERDR_WORKSPACE_ID" --label "<name>" --cwd <dir> --no-focus`.
    Read `.result.tab.tab_id` and `.result.root_pane.pane_id`. If your pane has moved,
    get its current workspace from `herdr pane current --current` first.
-2. Start with `herdr agent start <agent-name> --kind codex --pane <pane_id> -- --no-daemon`.
+2. Start with `herdr agent start <agent-name> --kind codex --pane <pane_id>`.
    Respect a different agent kind if Kevin requested one. Names match
    `[a-z][a-z0-9_-]{0,31}`. `agent_not_ready` can mean a trust or login dialog:
    read it and get Kevin's decision before answering it.

@@ -145,8 +145,7 @@ the terminal, so I can answer from the team floor. Claude needs Agent Wire's
 opt-in `hook claude --answer` PermissionRequest entry beside the herdr-tab
 hooks; see its
 [setup](https://github.com/kevinmanase/agent-wire/blob/main/docs/setup.md).
-Codex needs nothing extra, but a `codex --no-daemon` session (below) can't be
-answered this way.
+Codex needs nothing extra.
 
 ## Development
 
