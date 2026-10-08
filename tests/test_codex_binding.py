@@ -111,6 +111,21 @@ def test_explicit_label_commands_refuse_uncertain_targets(codex, monkeypatch, ca
     assert label_writes(state) == []
 
 
+@pytest.mark.parametrize("command", [["name", "🧪 login fix"], ["status", "done"], ["hook"]])
+def test_a_daemon_session_without_herdr_env_changes_nothing(codex, monkeypatch, capsys, command):
+    # Plain codex runs tools and hooks in the shared app server, which has no HERDR_* variables (#49).
+    helper, state = codex
+    monkeypatch.delenv("HERDR_ENV")
+    state["processes"][200] = "1 /usr/local/bin/codex app-server --listen unix:// --managed-daemon"
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), *command])
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"hook_event_name":"UserPromptSubmit","session_id":"session-1"}'))
+
+    helper.main()
+
+    assert capsys.readouterr().out.strip() == ("{}" if command == ["hook"] else "")
+    assert state["calls"] == []
+
+
 def test_a_stage_rename_keeps_the_pending_ask(codex, monkeypatch):
     helper, state = codex
     state["tabs"]["my-tab"] = "❓ ship today? · 🔍 login fix"
