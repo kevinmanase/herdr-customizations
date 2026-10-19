@@ -125,7 +125,12 @@ def test_next_hands_a_brief_to_a_ready_tab(herdr, tmp_path):
     assert result.returncode == 0, result.stderr
     calls = herdr.state["calls"]
     assert ["agent", "rename", "p1", "eng-1"] in calls
-    assert ["agent", "prompt", "eng-1", "Fix the login bug."] in calls
+    (brief,) = [
+        call[3]
+        for call in calls
+        if call[:3] == ["agent", "prompt", "eng-1"] and call[3].startswith("Fix the login bug.")
+    ]
+    assert "~/.claude/skills/delivery-lead/SKILL.md" in brief
     assert (tmp_path / "queue" / "started" / "01-eng-1.md").exists()
 
 

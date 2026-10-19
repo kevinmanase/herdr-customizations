@@ -1,6 +1,7 @@
 # Herdr customizations
 
 - Run `python -m pytest -q`, `ruff check .`, and `ruff format --check .` before committing.
+- Run verification locally. Do not enable, run, rerun, or wait for GitHub Actions in this repository.
 - Keep it working on both Linux and macOS: no `/proc`-only or `flock`-only paths.
 - Preserve pending asks across renames and ordinary lifecycle events.
 - Resolve the current tab from the pane, never from the focused tab.

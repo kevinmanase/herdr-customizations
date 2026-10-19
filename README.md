@@ -87,11 +87,16 @@ the role, and tells every other session to report to it.
 - `herdr-orchestrator route <brief>` asks Jev which lane a brief belongs to,
   and `herdr-orchestrator leads` gives a busy lane its own lead (below).
 
-The orchestrator coordinates. It hands investigations, fixes and watching CI
-to fresh sessions. Workers stop at CI green. The orchestrator, or the lane's lead,
-merges and tells the worker `merged <PR>`, and the worker reports END so the team floor shows it
-shipped. It keeps no notes file: it rebuilds its picture each time
-from ticket-graph checkpoints, Linear, GitHub and the tabs.
+The orchestrator delegates investigations, edits, reviews and checks. Each
+task's lead owns integration, repair and acceptance under the shared
+[delivery-lead skill](shared/skills/delivery-lead/SKILL.md). Workers return
+evidence to their lead; the lead advances work without intermediate owner
+acknowledgments and returns a verified PR or an actionable decision. Verification
+follows the project's policy, including local-only checks when Actions is disabled.
+Merge and deployment still require authority for the task. After an authorized
+merge, the lead tells the worker `merged <PR>` and the worker verifies it before
+reporting END. The orchestrator rebuilds its picture from task briefs, existing
+issues, worktrees, PRs and session reports.
 
 ## Lanes and leads
 
