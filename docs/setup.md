@@ -16,11 +16,20 @@ mkdir -p ~/.claude/hooks ~/.claude/skills ~/.codex/skills
 cp claude/hooks/herdr-tab claude/hooks/herdr-orchestrator ~/.claude/hooks/
 cp -R claude/skills/herdr ~/.claude/skills/
 cp -R codex/skills/herdr ~/.codex/skills/
+cp -R shared/skills/delivery-lead ~/.claude/skills/
+cp -R shared/skills/delivery-lead ~/.codex/skills/
 ```
 
 The skills refer to these exact paths, so keep them. To update, pull and
 copy again. If your Claude Stop hook entry still has `"async": true` from an
 earlier version, remove it (see below).
+
+The delivery-lead skill has one source, copied unchanged to both runtimes.
+Update all machines from the same merged commit and compare the installed files
+as below. Copying files does not replace instructions already loaded into a live
+conversation. In an existing lead's next prompt, ask it to reload its `herdr`
+and `delivery-lead` skills; new leads and workers receive the skill path in their
+first brief. Do not clear or restart a conversation to apply this update.
 
 ## Add the hooks
 
@@ -94,6 +103,8 @@ cmp claude/hooks/herdr-tab ~/.claude/hooks/herdr-tab
 cmp claude/hooks/herdr-orchestrator ~/.claude/hooks/herdr-orchestrator
 diff -r -x __pycache__ claude/skills/herdr ~/.claude/skills/herdr
 diff -r -x __pycache__ codex/skills/herdr ~/.codex/skills/herdr
+diff -r -x __pycache__ shared/skills/delivery-lead ~/.claude/skills/delivery-lead
+diff -r -x __pycache__ shared/skills/delivery-lead ~/.codex/skills/delivery-lead
 cmp plugins/agent-groups/groups.py ~/.local/bin/herdr-groups
 grep -q herdr_groups_tree ~/.config/herdr/config.toml || echo "sidebar row missing"
 for pair in claude-hooks:.claude/settings.json codex-hooks:.codex/hooks.json; do

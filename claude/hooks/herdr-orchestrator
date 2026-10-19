@@ -82,7 +82,9 @@ JEV_CHARS = 1500
 BRIEF = (
     "You are the orchestrator: the one Claude session in Herdr that keeps track of all the others "
     "for Kevin. The previous orchestrator stopped, so this session was started to replace it. Load the "
-    "`herdr` skill and follow its Orchestrator section. Coordinate, and hand the work itself to "
+    "`herdr` skill and follow its Orchestrator section. Read "
+    "`~/.claude/skills/delivery-lead/SKILL.md` for task contracts and acceptance. "
+    "Coordinate, and hand the work itself to "
     "fresh sessions. Rebuild the picture from each worktree's ticket-graph checkpoint, Linear, GitHub "
     "and the tabs, then tell Kevin in a few lines what you picked up and what needs him. If Agent Wire "
     "is installed, start your task text with `role: main`."
@@ -90,7 +92,9 @@ BRIEF = (
 LEAD_BRIEF = (
     "You are {lead}, the lead for the {name} lane ({about}). The orchestrator handed you this lane "
     "because it got busy, so its own context stays short. Load the `herdr` skill and follow its "
-    "Lane leads section. Keep your tab named `{label}`. Your queue is {queue}: start each brief in "
+    "Lane leads section. Read `~/.claude/skills/delivery-lead/SKILL.md` and own delivery through "
+    "integration, review, repair and the project's required verification without intermediate owner acknowledgments. "
+    "Keep your tab named `{label}`. Your queue is {queue}: start each brief in "
     "a fresh session with `~/.claude/hooks/herdr-orchestrator next --lane {lane}`. Coordinate, and "
     "hand the work itself to those sessions. If Agent Wire is installed, start your task text with "
     "`role: lead lane: {lane}`. Send the orchestrator one line when something in the lane merges, "
@@ -114,6 +118,11 @@ LANE_NOTE = (
     "instead of the orchestrator."
 )
 RUNTIMES = ("claude", "codex")
+WORKER_NOTE = (
+    "\n\nRead the Worker handoff section of `~/.{kind}/skills/delivery-lead/SKILL.md`. "
+    "Your supervisor is {supervisor}; return results and verification evidence there. "
+    "This assignment does not grant the lead's authority."
+)
 # Codex's own SessionStart hook covers labels; briefs are written for Claude, and the supervisor is Claude.
 CODEX_NOTE = (
     "\n\nYou are a Codex worker, {name}. Where this brief says `herdr-tab`, run "
@@ -430,6 +439,7 @@ def next_brief(*args):
             return 4
         name = agent_name(brief)
         supervisor = lane_lead(lane)[1] if lane else NAME
+        text += WORKER_NOTE.format(kind=kind, supervisor=supervisor)
         if lane:
             text += LANE_NOTE.format(lane=lane, lead=supervisor)
         if kind == "codex":

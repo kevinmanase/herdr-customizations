@@ -5,6 +5,13 @@ It keeps no notes file. The existing Claude
 integration maintains that agent; Codex must not create a competing orchestrator
 merely because it is a different agent kind.
 
+For assigned delivery work, read `~/.codex/skills/delivery-lead/SKILL.md`.
+An appointed lead owns integration, review, repair and acceptance. A delegated
+worker follows its Worker handoff section and returns evidence to that lead.
+Continue authorized work between units without requiring owner acknowledgments.
+Use the project's required verification; do not enable, run or wait for GitHub
+Actions when its owner has disabled them.
+
 ## Sending an update
 
 Discover with `herdr agent get orchestrator`. If it is your pane, don't message
@@ -59,11 +66,12 @@ is `runtime: codex` and run `~/.claude/hooks/herdr-orchestrator next`: it starts
 plain `codex` in a new tab (or a `⚪ ready` Codex tab), groups it, and tells it
 how to label its tab and report. Without that line, `next` starts Claude.
 
-Right after you merge a worker's PR, send that worker
+Merge only with authority for that task. Right after you merge a worker's PR, send that worker
 `Status from orchestrator: merged <repo>#<number>` with `herdr agent prompt`
 (SendMessage for a Claude worker), and tell any session waiting on that ticket. Every brief states
-the worker rule: stop at CI green, never merge, and on `merged <PR>` report END
-and keep the tab 🧹.
+the stopping point, required local checks and any hosted-check policy. Workers
+return evidence to the lead and do not merge without an applicable grant. On
+`merged <PR>`, verify the actual merge before reporting END and keeping the tab 🧹.
 
 Leave finished worker conversations open by default. A 🧹 tab is finished and
 waits only for a yes to clear, so list the 🧹 tabs for Kevin to approve as a

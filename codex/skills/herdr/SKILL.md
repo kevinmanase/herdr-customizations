@@ -148,8 +148,8 @@ See [Codex CLI commands](https://developers.openai.com/codex/cli/slash-commands)
 Find it with `herdr agent get orchestrator`. Use the same orchestrator for Claude
 and Codex; do not create one per agent kind. When merging, getting blocked,
 finishing, or starting a session, send the existing orchestrator one concise
-update via Herdr's agent interface. If your brief says you stop at CI green, the
-orchestrator or its lead merges and sends you `merged <repo>#<number>`. Check
+update via Herdr's agent interface. If your brief stops at a verified PR, an
+authorized orchestrator or lead may merge and send you `merged <repo>#<number>`. Check
 that `gh pr view <number> --repo <repo> --json state` reads `MERGED`. If Agent
 Wire is installed, `session_update` stage `END`, status `done`, same ticket, so
 the team floor shows it shipped. Then run `status clean` again so the tab stays

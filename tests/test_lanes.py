@@ -296,6 +296,7 @@ def test_the_fourth_brief_starts_a_lead_and_only_one(herdr, jev, lanes, queue):
     assert f"{queue / 'api'}" in brief_text
     assert "next --lane api" in brief_text
     assert "role: lead lane: api" in brief_text
+    assert "~/.claude/skills/delivery-lead/SKILL.md" in brief_text
     assert "never clear it" in brief_text
 
     result = herdr.run(ORCHESTRATOR, "leads")
@@ -906,6 +907,8 @@ def test_a_codex_brief_starts_plain_codex_where_a_claude_worker_would_go(
     assert brief.startswith("Fix the login bug.")
     assert "runtime:" not in brief
     assert CODEX_HELPER in brief
+    assert "~/.codex/skills/delivery-lead/SKILL.md" in brief
+    assert "Worker handoff" in brief
     assert f'herdr agent prompt {supervisor} "Status from eng-2: ' in brief
     assert ("send it your one-line updates" in brief) == bool(lane)
     assert (folder / "started/01-eng-2.md").exists()
@@ -925,7 +928,10 @@ def test_a_brief_without_runtime_codex_gets_claude(herdr, queue, text, brief):
     assert result.returncode == 0, result.stderr
     (start,) = start_calls(herdr)
     assert start[start.index("--kind") + 1] == "claude"
-    assert prompts(herdr, "eng-3") == [brief]
+    (sent,) = prompts(herdr, "eng-3")
+    assert sent.startswith(brief + "\n\n")
+    assert "~/.claude/skills/delivery-lead/SKILL.md" in sent
+    assert "Worker handoff" in sent
 
 
 def test_an_unknown_runtime_is_refused_and_the_brief_stays_queued(herdr, queue):
