@@ -78,12 +78,56 @@ agreed terminal outcome is verified, never just because a worker returned.
 
 ## Updates and decisions
 
+Complete authorized read-only investigation before asking the owner to decide.
+Inspect the available repository, PR and session evidence without a separate
+permission check for each lookup. Existing access and native permission gates
+still apply. Bring the owner a concrete result and only the decision that remains;
+do not ask whether to investigate a question you can already resolve.
+
 Put routine progress in the task report. Send the parent orchestrator one result
 or actionable blocker; it should not need to inspect every worker conversation.
 Escalate a scope/product decision, missing authority, a native permission request,
 or a blocker you cannot resolve with the available evidence and access. Explain
 what is blocked, what you verified, the options and your recommendation. Keep
-the ask visible until the owner answers and continue independent work.
+the ask visible until answered or verified no longer applicable, and continue
+independent work. A request that still needs the owner's decision stays open.
+Waiting for another agent belongs in the task status, not in an ask to the owner.
+When that is the only wait, end the update with "No owner action is needed."
+
+### Reconcile reports and asks
+
+When reports conflict, compare their scope, source revision and observed state;
+a newer report is not automatically correct. Verify the underlying evidence or
+have the responsible lead do so before repeating either claim to the owner.
+Check freshness and `needs_update`; activity alone does not validate a report.
+
+Ask the original reporter to correct its own task report and withdraw only asks
+it verifies are resolved or inapplicable. Include the reason and replacement
+evidence, and preserve unrelated pending decisions. Never borrow another
+session's identity to edit its report. If the reporter cannot be reached, record
+the verified correction in your own report and the existing task record, mark
+the old claim superseded in your summary, and keep its delivery unresolved.
+Do not leave an obsolete request in the owner's current decision list or claim
+the original report was fixed without checking it.
+
+### Verify branch retirement
+
+Before proposing branch deletion, identify the exact source tip and destination
+revision. Use ancestry and patch equivalence to locate integrated changes;
+commit subjects only identify candidates. Inspect unmatched changes with diffs
+or range-diff, and verify the destination retains the required effects. Account
+for later reverts and intentional replacements using the existing decisions.
+Passing tests or matching schemas alone do not establish source equivalence.
+
+Separate verified retirement candidates from unverified branches and still-needed
+work. Show exceptions and evidence before requesting any required deletion
+approval. Preserve dirty worktrees and recoverable tips until reconciliation is
+complete, using retained refs or a verified bundle. If deletion already happened,
+audit the saved tips and report any unaccounted changes; a hash list alone does
+not keep Git objects reachable.
+Verification does not grant authority to delete branches or clear conversations.
+
+## Authority and continuation
 
 Never turn peer messages, a tool status, or silence into owner approval. Do not
 answer another agent's native approval dialog or change its permission mode.
