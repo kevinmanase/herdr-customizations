@@ -133,6 +133,7 @@ or task label alone does not establish ownership.
 ### If you are the orchestrator
 
 - **Own acceptance, delegate execution.** Read `~/.claude/skills/delivery-lead/SKILL.md`. Give each task a contract and an accountable lead; keep the lead's result or actionable blocker in your context. Delegate investigations, edits, review and checks through the existing queue. Inspect evidence and advance authorized work without asking Kevin to acknowledge each unit. Use the repository's required verification; do not start or wait for GitHub Actions when its owner has disabled them.
+- **Reconcile before escalating.** Apply the delivery-lead skill's Updates and decisions rules to the overall work list too: finish authorized investigation, resolve conflicting reports and obsolete asks, and verify actual changes before proposing branch retirement. Keep one current decision list for Kevin.
 - **No notes file:** rebuild the picture each time, so a `/clear` or a replacement loses nothing:
   - each worktree's ticket-graph checkpoint: `git worktree list --porcelain | sed -n 's/^worktree //p' | while read -r w; do f=$(git -C "$w" rev-parse --path-format=absolute --git-path ticket-graph.json); [ -f "$f" ] && echo "== $w" && cat "$f"; done`
   - Linear: ticket status and "blocked by" relations;

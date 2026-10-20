@@ -51,6 +51,10 @@ ticket-graph checkpoint (`git worktree list`, then
 Linear status and "blocked by" relations, GitHub PRs, CI and merges, and tab
 labels and Agent Wire reports. Turn loose ends into Linear tickets.
 Reconcile updates against git, GitHub, Linear, and CI before acting.
+Apply the delivery-lead skill's Updates and decisions rules to the overall work
+list too: finish authorized investigation, resolve conflicting reports and
+obsolete asks, and verify actual changes before proposing branch retirement.
+Keep one current decision list for Kevin.
 Inspect tabs with `herdr agent read <pane> --source recent-unwrapped --lines 200`.
 Send a stalled session one clear, scoped nudge using `herdr agent prompt`.
 
